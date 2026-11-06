@@ -755,3 +755,25 @@ fn test_inflate_set_dictionary_feeds_history_and_only_at_start() {
     small.finish_vec(&stream, &mut out).unwrap();
     assert_eq!(out, b"wxyz!");
 }
+
+#[test]
+fn test_inflate_wipe_zeroes_window_and_tables() {
+    let mut inflater = Inflater::new();
+    let data = b"secret secret secret secret".repeat(40);
+    let packed = {
+        let mut w = Bits::new();
+        stored(&mut w, &data, true);
+        w.done()
+    };
+    let mut out = vec![0u8; 2048];
+    inflater.finish(&packed, &mut out).unwrap();
+    assert!(inflater.ring.iter().any(|&b| b != 0));
+    inflater.wipe();
+    assert!(inflater.ring.iter().all(|&b| b == 0));
+    assert!(inflater.tables.lens.iter().all(|&b| b == 0));
+    assert_eq!((inflater.whave, inflater.total_out), (0, 0));
+    assert_eq!(
+        inflater.finish(&[0x03, 0x00], &mut out).unwrap().status,
+        Status::Done
+    );
+}
