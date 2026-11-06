@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "compress-lib"
-version = "0.6.0"
+version = "0.7.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: the first release with edition 2024; nothing newer is needed
