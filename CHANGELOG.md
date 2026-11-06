@@ -13,6 +13,24 @@
 
 ---
 
+## [0.2.0] - 2026-11-06
+
+The design lock and the first code: checksums, errors, limits, and levels.
+
+### Added
+
+- `docs/API.md`: the complete planned 1.0 API with the version each item
+  arrives in.
+- `checksum`: `crc32` (slicing-by-16, tables built at compile time),
+  `Crc32` (streaming, `from_value`, `combine`), `crc32_combine`; `adler32`
+  (four lanes, deferred modulo), `Adler32`, `adler32_combine`.
+- `Error` (kind and input offset, `code()`), `ErrorKind` (every kind the
+  codecs through 0.5 return, each with a stable code and a message that says
+  what to do), `From<Error> for std::io::Error`.
+- `Limits` (64 MiB output cap by default, optional ratio cap with a floor,
+  gzip header and member caps, `unlimited()`), `Level` (0 to 9).
+- Checksum benchmarks (`benches/checksum.rs`).
+
 ## [0.1.0] - 2026-11-05
 
 The scaffold: the repository, the plan, and CI. No codec yet.
@@ -34,5 +52,6 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jamesgober/compress-lib/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/compress-lib/releases/tag/v0.1.0

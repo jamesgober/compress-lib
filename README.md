@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>unsafe</code> is forbidden. <code>no_std</code> with <code>alloc</code> when the default <code>std</code> feature is off.
     </p>
     <blockquote>
-        <strong>Status: <code>0.1.0</code>, scaffold.</strong> This release claims the name and carries the plan; there is no codec in it yet. Inflate arrives in <code>0.3</code>, deflate and the RFC 7692 helpers in <code>0.4</code>, zlib and gzip framing in <code>0.5</code>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: <code>0.2.0</code>, design lock.</strong> The complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>, each item with its version. CRC-32, Adler-32, the error type, limits, and levels ship now; the raw DEFLATE inflater arrives in <code>0.3</code>, the deflater and the RFC 7692 helpers in <code>0.4</code>, zlib and gzip framing in <code>0.5</code>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -40,19 +40,28 @@
 
 Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync, full, and finish flushes; zlib and gzip framing with checksums always verified; preset dictionaries; per-message compression for WebSocket servers and clients (context takeover on or off); CRC-32 and Adler-32; `std::io` adapters. Brotli follows after 1.0. It does not negotiate HTTP or WebSocket headers (http-net and ws-net do) and it does not read archives.
 
-## Quick start (planned API, from 0.5)
+## Quick start
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.1" }
+compress = { package = "compress-lib", version = "0.2" }
 ```
+
+Available now:
+
+```rust
+let crc = compress::checksum::crc32(data);            // gzip's checksum
+let adler = compress::checksum::adler32(data);        // zlib's checksum
+```
+
+Planned (0.3 to 0.5), the shape every codec follows:
 
 ```rust
 let packed = compress::gzip::compress(body);          // Vec<u8>, level 6
 let body = compress::gzip::decompress(&packed)?;      // capped at 64 MiB by default
 ```
 
-The complete planned API, with the version each item arrives in, is in [`dev/PLAN.md`](./dev/PLAN.md) section 6.
+The complete planned API, with the version each item arrives in, is in [`docs/API.md`](./docs/API.md).
 
 <hr>
 <br>

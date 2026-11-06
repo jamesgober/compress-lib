@@ -10,12 +10,30 @@
 //! decodes, so a decompression bomb costs at most the cap. There is no
 //! `unsafe` code and no third-party runtime dependency.
 //!
+//! ## Tier 1
+//!
+//! Add it with Cargo's rename, `compress = { package = "compress-lib", version
+//! = "0.2" }`, and code reads `compress::`. In 0.2 the checksums are ready:
+//!
+//! ```
+//! use compress_lib::checksum::{adler32, crc32};
+//!
+//! assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+//! assert_eq!(adler32(b"Wikipedia"), 0x11E6_0398);
+//! ```
+//!
+//! Decoders take [`Limits`] (64 MiB of output by default) and encoders a
+//! [`Level`] (0 to 9, zlib's meaning). Every failure is an [`Error`] with a
+//! matchable [`ErrorKind`] and a stable code for logs and metrics.
+//!
 //! ## Status
 //!
-//! `0.1.0`, the scaffold: the crate claims its name and carries the plan.
-//! The codecs arrive from `0.3` (inflate) and `0.4` (deflate and RFC 7692);
-//! the complete planned API, each item with its version, is `dev/PLAN.md` in
-//! the [repository](https://github.com/jamesgober/compress-lib).
+//! `0.2.0`, the design lock: the complete planned API, each item with the
+//! version it arrives in, is `docs/API.md` in the
+//! [repository](https://github.com/jamesgober/compress-lib). The checksums,
+//! the error type, the limits, and the levels ship now; the raw DEFLATE
+//! inflater arrives in `0.3`, the deflater and the RFC 7692 helpers in `0.4`,
+//! zlib and gzip in `0.5`.
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -35,8 +53,20 @@
     )
 )]
 
+extern crate alloc;
+
 /// Crate version string, populated by Cargo at build time.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod checksum;
+
+mod error;
+mod level;
+mod limits;
+
+pub use error::{Error, ErrorKind};
+pub use level::Level;
+pub use limits::Limits;
 
 #[cfg(test)]
 mod tests {

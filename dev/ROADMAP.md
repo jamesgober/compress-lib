@@ -5,21 +5,21 @@
 >
 > **Anti-deferral rule:** no listed task moves to a later phase unless this file records the move and the reason, with a decision-log entry in `PLAN.md`. P0 items ship in the version listed and never move.
 
-## v0.1.0 - Scaffold
+## v0.1.0 - Scaffold (DONE, 2026-11-05)
 Exit: CI green on every job; the crate published to claim the name; decision log D-001 to D-013 written.
-- [ ] Repository `jamesgober/compress-lib` created, `lib-collection/compress-lib` pushed.
-- [ ] Manifest (edition 2024, MSRV 1.85, feature `std`, no dependencies), README, CHANGELOG, REPS, dual license, `deny.toml`, `clippy.toml`, `rustfmt.toml`, `.editorconfig`, `.gitattributes`.
-- [ ] `src/lib.rs`: crate docs, lint attributes, `forbid(unsafe_code)`, `VERSION` (ROOT-01), one test.
-- [ ] `dev/PLAN.md`, `dev/DIRECTIVES.md`, `dev/ROADMAP.md`; `fuzz/` skeleton.
-- [ ] CI: Linux, macOS, Windows on x86_64 and aarch64, stable and 1.85; cross checks (i686, s390x, wasm32, thumbv7em); Miri on x86_64 and s390x; no-runtime-dependency job; package; audit and deny.
+- [x] Repository `jamesgober/compress-lib` created, `lib-collection/compress-lib` pushed.
+- [x] Manifest (edition 2024, MSRV 1.85, feature `std`, no dependencies), README, CHANGELOG, REPS, dual license, `deny.toml`, `clippy.toml`, `rustfmt.toml`, `.editorconfig`, `.gitattributes`.
+- [x] `src/lib.rs`: crate docs, lint attributes, `forbid(unsafe_code)`, `VERSION` (ROOT-01), one test.
+- [x] `dev/PLAN.md`, `dev/DIRECTIVES.md`, `dev/ROADMAP.md`; `fuzz/` skeleton.
+- [x] CI: Linux, macOS, Windows on x86_64 and aarch64, stable and 1.85; cross checks (i686, s390x, wasm32, thumbv7em); Miri on x86_64 and s390x; no-runtime-dependency job; package; audit and deny.
 
-## v0.2.0 - Design lock
+## v0.2.0 - Design lock (DONE, 2026-11-06)
 API: ROOT-02 · ERR-16 (type and codes) · LIM-01 to LIM-04 · LVL-01 · CK-01 to CK-04.
 Exit: `docs/API.md` lists the whole 1.0 API with the version of each item (D-010); checksums pass the published check values and match a reference on random data; checksum benchmarks recorded.
-- [ ] `docs/API.md` in the metrics-lib format, every item of `PLAN.md` section 6.
-- [ ] `Error`, `ErrorKind` (every 0.3 kind), `Limits`, `Level`.
-- [ ] CRC-32 (slicing-by-16) and Adler-32 (deferred modulo), one-shot, streaming, `combine`.
-- [ ] One new defence idea recorded.
+- [x] `docs/API.md` in the metrics-lib format, every item of `PLAN.md` section 6.
+- [x] `Error`, `ErrorKind` (every kind through 0.5, plus `AllocationFailed`, D-014), `Limits`, `Level`.
+- [x] CRC-32 (slicing-by-16) and Adler-32 (deferred modulo), one-shot, streaming, `combine`.
+- [x] One new defence idea recorded.
 
 ## v0.3.0 - Core: inflate
 API: DF-01, DF-02, DF-10 to DF-16 · ERR-01 to ERR-10.
