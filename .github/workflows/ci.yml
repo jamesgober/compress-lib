@@ -105,13 +105,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Isolation is off only so proptest can look for its regression files;
       # the code under test does no I/O.
+      # Property tests are skipped: proptest's generators run about a
+      # thousand times slower under Miri, and the unit tests cover the same
+      # code paths.
       - name: Miri (x86_64)
-        run: cargo miri test --lib
+        run: cargo miri test --lib -- --skip prop_
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
           PROPTEST_CASES: "8"
       - name: Miri (s390x, big-endian)
-        run: cargo miri test --lib --target s390x-unknown-linux-gnu
+        run: cargo miri test --lib --target s390x-unknown-linux-gnu -- --skip prop_
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
           PROPTEST_CASES: "8"
