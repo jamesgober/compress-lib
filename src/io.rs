@@ -4,7 +4,7 @@
 //! |---|---|---|
 //! | [`Reader`] | reads from a compressed `Read` | decompresses |
 //! | [`Writer`] | writes to a `Write` | compresses |
-//! | [`Encoder`] | reads from a plain `Read` | compresses |
+//! | [`EncodeReader`] | reads from a plain `Read` | compresses |
 //! | [`DecodeWriter`] | writes to a `Write` | decompresses |
 //!
 //! Each holds one 32 KiB buffer besides its engine. Decoders take
@@ -72,6 +72,7 @@ impl<R: Read> Reader<R> {
     /// let r = compress_lib::io::Reader::new(&b""[..], compress_lib::Format::Gzip);
     /// # let _ = r;
     /// ```
+    #[must_use]
     pub fn new(inner: R, format: Format) -> Self {
         Self {
             inner,
@@ -107,6 +108,7 @@ impl<R: Read> Reader<R> {
     /// let r = compress_lib::io::Reader::new(&b"xyz"[..], compress_lib::Format::Gzip);
     /// let _source: &[u8] = r.into_inner();
     /// ```
+    #[must_use]
     pub fn into_inner(self) -> R {
         self.inner
     }
@@ -174,6 +176,7 @@ impl<W: Write> Writer<W> {
     /// let w = compress_lib::io::Writer::new(Vec::new(), compress_lib::Format::Gzip, compress_lib::Level::FAST);
     /// # let _ = w;
     /// ```
+    #[must_use]
     pub fn new(inner: W, format: Format, level: Level) -> Self {
         Self {
             inner: Some(inner),
@@ -256,15 +259,15 @@ impl<W: Write> Drop for Writer<W> {
 /// ```
 /// use std::io::Read;
 ///
-/// use compress_lib::{Format, Level, gzip, io::Encoder};
+/// use compress_lib::{Format, Level, gzip, io::EncodeReader};
 ///
 /// let mut packed = Vec::new();
-/// Encoder::new(&b"plain source"[..], Format::Gzip, Level::DEFAULT).read_to_end(&mut packed)?;
+/// EncodeReader::new(&b"plain source"[..], Format::Gzip, Level::DEFAULT).read_to_end(&mut packed)?;
 /// assert_eq!(gzip::decompress(&packed).unwrap(), b"plain source");
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[derive(Debug)]
-pub struct Encoder<R> {
+pub struct EncodeReader<R> {
     inner: R,
     encoder: FormatEncoder,
     buf: Box<[u8]>,
@@ -274,15 +277,16 @@ pub struct Encoder<R> {
     done: bool,
 }
 
-impl<R: Read> Encoder<R> {
+impl<R: Read> EncodeReader<R> {
     /// Compresses `inner` as `format` at `level`.
     ///
     /// # Examples
     ///
     /// ```
-    /// let e = compress_lib::io::Encoder::new(&b""[..], compress_lib::Format::Zlib, compress_lib::Level::FAST);
+    /// let e = compress_lib::io::EncodeReader::new(&b""[..], compress_lib::Format::Zlib, compress_lib::Level::FAST);
     /// # let _ = e;
     /// ```
+    #[must_use]
     pub fn new(inner: R, format: Format, level: Level) -> Self {
         Self {
             inner,
@@ -296,7 +300,7 @@ impl<R: Read> Encoder<R> {
     }
 }
 
-impl<R: Read> Read for Encoder<R> {
+impl<R: Read> Read for EncodeReader<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if out.is_empty() || self.done {
             return Ok(0);
@@ -356,6 +360,7 @@ impl<W: Write> DecodeWriter<W> {
     /// let w = compress_lib::io::DecodeWriter::new(Vec::new(), compress_lib::Format::Zlib);
     /// # let _ = w;
     /// ```
+    #[must_use]
     pub fn new(inner: W, format: Format) -> Self {
         Self {
             inner,

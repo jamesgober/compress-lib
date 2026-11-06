@@ -473,6 +473,38 @@ New defence idea per version is recorded in `dev/PLAN.md` (ideas section); the f
 - **Determinism**: digest of compressed corpus compared across CI OSes.
 - **Soak** (0.7): 4 h of random round trips with a memory check.
 
+### 10.1 Edge cases and their tests
+
+| Edge case | Test |
+|---|---|
+| E-1 | `test_inflate_empty_input_is_unexpected_end` |
+| E-2 | `test_roundtrip_empty_stream_is_03_00` |
+| E-3 | `test_inflate_one_byte_is_unexpected_end` |
+| E-4 | `test_inflate_stored_round_trip_and_sizes` |
+| E-5 | `test_inflate_match_lengths_3_and_258_and_distance_1` |
+| E-6 | `test_inflate_distance_32768_ok_and_one_past_history_rejected` |
+| E-7 | `test_inflate_window_bits_8_enforces_256` |
+| E-8 | `test_inflate_output_cap_exact_and_one_past` |
+| E-9 | `test_limits_ratio_below_floor_not_checked`, `test_inflate_ratio_cap_fires_after_floor` |
+| E-10 | `test_inflate_empty_fixed_block_decodes_to_nothing` |
+| E-11 | `test_inflate_dynamic_single_distance_code_allowed`, `test_inflate_dynamic_block_literals_only_without_distance_codes` |
+| E-12 | `test_inflate_dynamic_repeat_without_previous_rejected` |
+| E-13 | `test_inflate_dynamic_repeat_past_end_rejected` |
+| E-14 | `test_inflate_end_of_block_only_code_allowed` |
+| E-15 | `test_inflate_reserved_fixed_symbols_rejected` |
+| E-16 | `test_inflate_truncated_at_every_byte_is_unexpected_end`, `test_attack_t12_truncation_detected` |
+| E-17 | `test_inflate_trailing_bytes_rejected_and_consumed_exact` |
+| E-18, E-19 | `test_inflate_many_empty_stored_blocks_linear`, `test_attack_t6_empty_blocks_and_members_bounded` |
+| E-20 | `test_framing_gzip_header_fields_round_trip` |
+| E-21 | `test_framing_gzip_header_crc_checked` |
+| E-22, E-24 | `test_framing_gzip_checks_fail_closed` |
+| E-23 | `test_framing_gzip_members_and_cap` |
+| E-25 | `test_zlib_bad_headers_rejected`, `test_zlib_dictionary_required_and_wrong` |
+| E-26 | `test_inflate_next_stream_before_done_is_invalid_state` |
+| E-27 | `test_roundtrip_sync_flush_ends_with_marker_and_is_decodable` |
+| E-28 | `test_roundtrip_full_flush_cuts_history` |
+| E-29, E-30 | `test_message_empty_and_incompressible` |
+
 ---
 
 ## 11. Documentation deliverables

@@ -377,9 +377,9 @@ fn test_framing_io_adapters_every_format() {
             r.read_to_end(&mut out).unwrap();
             assert_eq!(out, data, "{format:?} step {step}");
         }
-        // Encoder (read side) -> DecodeWriter.
+        // EncodeReader -> DecodeWriter.
         let mut packed2 = Vec::new();
-        io::Encoder::new(
+        io::EncodeReader::new(
             Trickle {
                 data: &data,
                 step: 999,
