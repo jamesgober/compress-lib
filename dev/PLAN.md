@@ -432,6 +432,7 @@ Tier 3, `Deflater`:
 | T-12 | Truncated stream treated as complete (silent data loss) | `finish` reports `UnexpectedEnd`; Tier 1 functions always finish | every prefix of a valid stream fails with `UnexpectedEnd` under `finish` | none | 0.3 |
 | T-13 | Trailing data smuggling (bytes after the stream treated as something else) | `TrailingData` by default in Tier 1 and framing; streaming returns `consumed` exactly | valid stream plus 1 byte fails in Tier 1 | none | 0.3 |
 | T-14 | Encoder resource abuse (attacker-supplied data that triggers worst-case chain walks at level 9) | chain limits per level; level 9 bounded at 4096 probes per position | adversarial input (all same hash, distinct bytes) at level 9 stays within 20x level 6 time | none | 0.4 |
+| T-15 | Plaintext left in compression state after a connection that carried secrets ends | `wipe()` on every engine zeroes history, tables, and buffers (spare capacity included) through `black_box` | `test_attack_wipe_leaves_no_plaintext` and unit tests that read the buffers | one pass over the engine's memory | 0.7 |
 
 New defence idea per version is recorded in `dev/PLAN.md` (ideas section); the first (0.1): the inflater's ratio check counts input taken into the bit buffer, so an attacker cannot lower the measured input by keeping bytes pending; checked by a test feeding one byte at a time.
 

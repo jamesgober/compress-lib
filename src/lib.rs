@@ -133,6 +133,19 @@ pub use level::Level;
 pub use limits::Limits;
 pub use stream::{Progress, Status};
 
+/// Overwrites every element of `v` with the default value, spare capacity
+/// included, keeping its length, and passes it through
+/// [`core::hint::black_box`] so the writes are not removed as dead stores.
+/// Without `unsafe` (volatile writes) this is a strong hint to the compiler,
+/// not a guarantee; the documentation of every `wipe` says so.
+pub(crate) fn wipe_vec<T: Copy + Default>(v: &mut alloc::vec::Vec<T>) {
+    let len = v.len();
+    v.resize(v.capacity(), T::default());
+    v.fill(T::default());
+    core::hint::black_box(&*v);
+    v.truncate(len);
+}
+
 #[cfg(test)]
 mod tests {
     use super::VERSION;

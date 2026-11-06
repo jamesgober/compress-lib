@@ -365,6 +365,36 @@ impl Inflater {
         self.whave = 0;
     }
 
+    /// Zeroes the history window and the decode tables (which hold what the
+    /// stream decoded and how it was coded), then resets the inflater for a
+    /// new stream. For connections that carried secrets: call it before the
+    /// inflater is dropped or reused. The allocations are kept.
+    ///
+    /// The zeroing goes through [`core::hint::black_box`] so it is not
+    /// removed as a dead store; without `unsafe` volatile writes that is a
+    /// strong hint to the compiler, not a guarantee.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::deflate::Inflater;
+    ///
+    /// let mut inflater = Inflater::new();
+    /// let mut out = Vec::new();
+    /// inflater.finish_vec(&[0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00], &mut out)?;
+    /// inflater.wipe();
+    /// assert_eq!(inflater.total_out(), 0);
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    pub fn wipe(&mut self) {
+        crate::wipe_vec(&mut self.ring);
+        *self.tables = Tables::new();
+        core::hint::black_box(&*self.tables);
+        self.pending_len = 0;
+        self.pending_dist = 0;
+        self.reset();
+    }
+
     /// After `Done`, starts a new DEFLATE stream that keeps the window, so
     /// the next stream may refer back into this one. This is RFC 7692 context
     /// takeover after a message that ended with a final block.
