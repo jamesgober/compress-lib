@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "compress-lib"
-version = "0.1.0"
+version = "0.2.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: the first release with edition 2024; nothing newer is needed
@@ -70,6 +70,12 @@ std = []
 [dev-dependencies]
 # Property tests (REPS: proptest for every invariant).
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Benchmarks (criterion baselines for every hot path).
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "checksum"
+harness = false
 
 
 # RELEASE PROFILE

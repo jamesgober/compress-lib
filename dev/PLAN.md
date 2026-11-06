@@ -4,7 +4,7 @@
 >
 > **Read order:** [`../REPS.md`](../REPS.md) &rarr; [`DIRECTIVES.md`](./DIRECTIVES.md) &rarr; **this file** &rarr; [`ROADMAP.md`](./ROADMAP.md).
 >
-> **Status:** scaffold, `0.1.0` (2026-11-05). The design below is the plan of record; `0.2.0` locks the public API in `docs/API.md`.
+> **Status:** design locked, `0.2.0` (2026-11-06): the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). The raw DEFLATE inflater is `0.3.0`.
 
 ---
 
@@ -530,6 +530,7 @@ One new defence idea per version: hypothesis, method, expected cost.
 
 | Version | Idea | Method | Expected cost |
 |---|---|---|---|
+| 0.2 | A checksum that is merely "verified" can still be skipped by a caller who forgets to finish the stream; the framing decoders verify the trailer inside `finish`, and the one-shot functions always call it, so no caller-facing path returns data without its checksum checked. | 0.5 tests: every Tier 1 decoder fed a stream with a flipped trailer byte fails, and no public decoder returns `Done` before the trailer is read. | none: the checksum runs anyway |
 | 0.1 | The ratio cap must count input the inflater has taken into its bit buffer, not input it has decoded, or an attacker can hold bytes pending and make the measured ratio look smaller than it is. | `total_in` counts bytes moved into the bit buffer; a test feeds one byte per call and checks the ratio error fires at the same output position as a one-shot call. | none: the counter exists anyway |
 
 ---
@@ -551,3 +552,7 @@ One new defence idea per version: hypothesis, method, expected cost.
 | D-011 | 2026-11-05 | `no_std` with `alloc` for the codecs; `std` (default) adds the `io` adapters | embedded and wasm users; the codecs need no OS |
 | D-012 | 2026-11-05 | Benchmark corpora are generated deterministically in the benchmark code plus the repository's own files; no corpus download | reproducible on every machine and runner, nothing fetched from outside |
 | D-013 | 2026-11-05 | CI: Linux, macOS, Windows on x86_64 and aarch64, stable and 1.85; cross checks for i686, s390x (big-endian), wasm32, and a bare-metal `no_std` target; Miri on x86_64 and s390x; a job that fails on any runtime dependency | the bit reader packs bytes into words, so width and byte order are tested, not assumed |
+| D-014 | 2026-11-06 | `ErrorKind::AllocationFailed`: decoders that grow a `Vec` use `try_reserve` and fail with it instead of aborting | a server under memory pressure should refuse one request, not die; the cost is one branch per reservation |
+| D-015 | 2026-11-06 | `ErrorKind::InvalidState` added to the locked set (E-26: `next_stream` before `Done`) and `Error::offset` counts compressed input since the engine started or was reset | errors must say where; state misuse must be an error, never a panic |
+| D-016 | 2026-11-06 | CRC-32 by slicing-by-16 tables built at compile time (16 KiB static); Adler-32 with four lanes and deferred modulo (zlib's NMAX 5,552 per lane) | portable safe-Rust speed on every target; hardware CRC (PCLMULQDQ, ARMv8 CRC) needs `unsafe` intrinsics or runtime detection and is left to OD-1 |
+| D-017 | 2026-11-06 | `criterion` as a dev-dependency with default features off; competitor benchmarks stay in `bench-compare/` (0.6) | the crate's own baselines live with the code; competitors pull in C toolchains |
