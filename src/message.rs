@@ -420,7 +420,10 @@ impl Decompressor {
     /// # Errors
     ///
     /// `OutputLimit` past `max`; `TrailingData` for nonzero bytes after a
-    /// final block; any decoding error. After an error the decompressor is reset
+    /// final block; `UnexpectedEnd` when the message, with the
+    /// `00 00 FF FF` tail appended, does not end on a block boundary (a
+    /// block cut short, or a sender that left the tail in place); any
+    /// decoding error. After an error the decompressor is reset
     /// (the connection should be failed anyway).
     ///
     /// # Examples
@@ -519,8 +522,20 @@ impl Decompressor {
             ));
         }
         if last && !self.inflater.is_done() {
-            self.inflater
+            let t = self
+                .inflater
                 .decompress_into(&TAIL, out, open.start, false)?;
+            // The tail is the empty stored block a sync flush ends with, so
+            // after it the message must sit on a block boundary (RFC 7692
+            // section 7.2.2). A block cut short (a stored block missing
+            // bytes, a Huffman block without its end code) would otherwise
+            // pass, and with context takeover corrupt the next message.
+            if t.consumed != TAIL.len() || !self.inflater.at_block_boundary() {
+                return Err(Error::new(
+                    ErrorKind::UnexpectedEnd,
+                    self.inflater.total_in(),
+                ));
+            }
         }
         let produced = open.produced + (out.len() - before);
         if !last {
