@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>unsafe</code> is forbidden. <code>no_std</code> with <code>alloc</code> when the default <code>std</code> feature is off.
     </p>
     <blockquote>
-        <strong>Status: <code>0.4.0</code>, deflate and RFC 7692.</strong> Raw DEFLATE both ways: the inflater (streaming, window bits 8 to 15, output and ratio caps checked before every output chunk, zlib's exact acceptance rules) and the deflater (levels 0 to 9, window bits 8 to 15, sync, full, and finish flushes, preset dictionaries), plus the <code>message</code> module for WebSocket permessage-deflate. zlib and gzip framing arrive in <code>0.5</code>; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: <code>0.5.0</code>, feature complete.</strong> Raw DEFLATE, zlib, and gzip, both ways, streaming and one-shot; the <code>message</code> module for WebSocket permessage-deflate; format detection; and <code>std::io</code> adapters. Decoders agree with zlib on every accept, reject, and output in the differential tests, and every limit is checked before output is written. Optimisation (<code>0.6</code>) and hardening (<code>0.7</code>) come next; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -44,15 +44,24 @@ Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.4" }
+compress = { package = "compress-lib", version = "0.5" }
 ```
 
-Available now:
+One call each way, capped at 64 MiB of output by default:
 
 ```rust
-let packed = compress::deflate::compress(data);        // raw DEFLATE, level 6
-let data = compress::deflate::decompress(&packed)?;   // capped at 64 MiB
-let crc = compress::checksum::crc32(&data);           // gzip's checksum
+let packed = compress::gzip::compress(body);          // Vec<u8>, level 6
+let body = compress::gzip::decompress(&packed)?;      // all members, checksums verified
+let z = compress::zlib::compress(data);               // HTTP's "deflate" coding
+let raw = compress::deflate::compress(data);          // raw DEFLATE
+let any = compress::decompress(&packed)?;             // gzip or zlib, detected
+```
+
+Limits for untrusted input:
+
+```rust
+let limits = compress::Limits::new().with_max_output(8 << 20).with_max_ratio(50);
+let body = compress::gzip::decompress_with(&wire, limits)?;   // OutputLimit, RatioLimit
 ```
 
 WebSocket permessage-deflate (RFC 7692), one direction each:
@@ -67,26 +76,21 @@ tx.compress_message(text, &mut payload)?;               // sync flush, tail remo
 rx.decompress_message(&payload, &mut message, max)?;    // budget checked while inflating
 ```
 
-Streaming, with buffers you own:
+Streaming, with buffers you own, for any format:
 
 ```rust
-use compress::deflate::{Deflater, Flush, Inflater, Status};
+use compress::{Decoder, Format, deflate::Status};
 
-let p = deflater.compress(input, &mut output, Flush::None)?;  // push input, pull output
-let q = inflater.decompress(input, &mut output)?;
-match q.status {
-    Status::NeedsInput => { /* feed input[q.consumed..] and more */ }
-    Status::NeedsOutput => { /* drain output[..q.produced], call again */ }
-    _ => { /* Status::Done: the stream ended at input[q.consumed] */ }
+let mut decoder = Decoder::new(Format::Gzip);
+let p = decoder.decompress(chunk, &mut output)?;       // push input, pull output
+match p.status {
+    Status::NeedsInput => { /* feed chunk[p.consumed..] and more; finish() with the last */ }
+    Status::NeedsOutput => { /* drain output[..p.produced], call again */ }
+    _ => { /* Status::Done */ }
 }
 ```
 
-Planned for 0.5, the same shape:
-
-```rust
-let packed = compress::gzip::compress(body);          // Vec<u8>, level 6
-let body = compress::gzip::decompress(&packed)?;      // capped at 64 MiB by default
-```
+And `std::io`: `compress::io::Reader`, `Writer`, `Encoder`, `DecodeWriter`.
 
 The complete planned API, with the version each item arrives in, is in [`docs/API.md`](./docs/API.md).
 

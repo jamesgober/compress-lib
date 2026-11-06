@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "compress-lib"
-version = "0.4.0"
+version = "0.5.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: the first release with edition 2024; nothing newer is needed
@@ -48,6 +48,15 @@ path = "src/lib.rs"
 # The example reports errors through `std::io`.
 [[example]]
 name = "streaming"
+required-features = ["std"]
+
+[[example]]
+name = "gzip_file"
+required-features = ["std"]
+
+# The framing tests also cover the `std::io` adapters.
+[[test]]
+name = "framing"
 required-features = ["std"]
 
 # `cfg(fuzzing)` is set by cargo-fuzz for the entry points in `__fuzz`.

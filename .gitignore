@@ -23,3 +23,7 @@ Desktop.ini
 
 # Libraries do not commit the lockfile
 Cargo.lock
+
+# Competitor benchmarks
+/bench-compare/target/
+/bench-compare/Cargo.lock

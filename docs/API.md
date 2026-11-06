@@ -9,7 +9,7 @@ Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.4" }
+compress = { package = "compress-lib", version = "0.5" }
 ```
 
 ## Contents
@@ -273,7 +273,8 @@ rx.decompress_message(&wire, &mut text, 1 << 20)?;
 | `zlib::Decoder`, `zlib::Encoder` with `set_dictionary`, `dictionary_id()` (ZL-02) | 0.5 |
 | `gzip::{compress, compress_with, decompress, decompress_with}` (GZ-01) | 0.5 |
 | `gzip::Decoder` (multi-member by default; `with_single_member()`, `with_trailing_data(bool)`), `gzip::Encoder` (`with_header(GzipHeader)`) (GZ-02) | 0.5 |
-| `GzipHeader { mtime, os, extra_flags, text, name, comment, extra }`, read through `Decoder::header()` when kept (GZ-03) | 0.5 |
+| `GzipHeader::new()`, `with_name`, `with_comment`, `with_extra`, `with_mtime`, `with_os`, `with_text`; `name()`, `comment()`, `extra()`, `mtime()`, `os()`, `extra_flags()`, `text()`; read through `Decoder::with_keep_header(true)` and `Decoder::header()` (GZ-03) | 0.5 |
+| `gzip::Decoder::members()`, `with_limits`; `zlib::Decoder::with_window_bits`, `with_limits`; `zlib::Encoder::with_window_bits`; `gzip::Encoder::with_window_bits` | 0.5 |
 
 HTTP's `deflate` content coding is zlib framing (RFC 9110 section 8.4.1.2): use `zlib`.
 
@@ -285,13 +286,14 @@ HTTP's `deflate` content coding is zlib framing (RFC 9110 section 8.4.1.2): use 
 |---|---|
 | `Format::{Raw, Zlib, Gzip}`, `Format::detect(&[u8]) -> Option<Format>` (gzip by magic, zlib by header check; raw is never guessed) (FMT-01) | 0.5 |
 | `Decoder::new(Format)`, `Encoder::new(Format, Level)`: one type for code that picks the format at run time (FMT-02) | 0.5 |
-| `compress_lib::decompress(&[u8])`: gzip or zlib, detected (FMT-03) | 0.5 |
+| `compress_lib::decompress(&[u8])` and `decompress_with(&[u8], Limits)`: gzip or zlib, detected (FMT-03) | 0.5 |
+| `Decoder::{with_limits, format, decompress, finish, decompress_vec, finish_vec, is_done, total_in, total_out, reset}`, `Encoder::{format, compress, compress_vec, reset}` | 0.5 |
 
 ---
 
 ## `io` adapters
 
-Feature `std` (default), 0.5 (IO-01 to IO-03): `io::Reader<R: Read>` (decompresses while reading), `io::Writer<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` returns the inner writer), `io::Encoder<R: Read>` and `io::DecodeWriter<W: Write>` for the reverse directions. Each takes a `Format` and, for decoders, `Limits`.
+Feature `std` (default), 0.5 (IO-01 to IO-03): `io::Reader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`), `io::Writer<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::Encoder<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
 
 ---
 

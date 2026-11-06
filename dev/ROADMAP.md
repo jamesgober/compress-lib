@@ -36,9 +36,12 @@ Exit: round trips at every level, window, and flush pattern; miniz_oxide decodes
 - [x] Threats T-9, T-10, T-14; fuzz targets `roundtrip` and `message`.
 - Moved to 0.6 (D-031): deflate speed against the section 9 targets (sizes already match zlib; speed at level 1 measured well behind miniz_oxide and zlib-rs on the shared machine).
 
-## v0.5.0 - Feature complete
+## v0.5.0 - Feature complete (DONE, 2026-11-06)
 API: ZL-01, ZL-02, GZ-01 to GZ-03, FMT-01 to FMT-03, IO-01 to IO-03, LIM-05 · ERR-11 to ERR-15.
 Exit: every FR-1 to FR-16 met; files produced by GNU gzip and zlib decode; T-6 (members), T-7, T-8 tests pass.
+- [x] zlib and gzip decoders and encoders, `Format`, `Decoder`, `Encoder`, auto-detect, `io` adapters.
+- [x] Interoperation with zlib both ways; CPython gzip vectors; T-6 (members), T-7 (header cap), T-8 (checksums) tests (`tests/framing.rs`).
+- [x] Fuzz target `framing`; examples `gzip_file`, `websocket_message`, `http_body`.
 
 ## v0.6.0 - Optimisation
 Exit: `bench-compare/` against miniz_oxide, zlib-rs, and flate2 backends on Linux, macOS, and Windows runners; `docs/PERFORMANCE.md` with measured numbers; `PLAN.md` section 9 targets met or the gap recorded with its reason; `MemoryConfig` (DF-37).
