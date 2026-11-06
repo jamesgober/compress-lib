@@ -13,27 +13,48 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.2" }`, and code reads `compress::`. In 0.2 the checksums are ready:
+//! = "0.3" }`, and code reads `compress::`. One call decompresses a complete
+//! raw DEFLATE stream, capped at 64 MiB of output by default:
 //!
 //! ```
-//! use compress_lib::checksum::{adler32, crc32};
+//! use compress_lib as compress;
 //!
-//! assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
-//! assert_eq!(adler32(b"Wikipedia"), 0x11E6_0398);
+//! let data = compress::deflate::decompress(&[0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00])?;
+//! assert_eq!(data, b"hello");
+//!
+//! let small = compress::Limits::new().with_max_output(1 << 20);
+//! let data = compress::deflate::decompress_with(&[0x03, 0x00], small)?;
+//! assert!(data.is_empty());
+//! # Ok::<(), compress_lib::Error>(())
 //! ```
 //!
-//! Decoders take [`Limits`] (64 MiB of output by default) and encoders a
-//! [`Level`] (0 to 9, zlib's meaning). Every failure is an [`Error`] with a
-//! matchable [`ErrorKind`] and a stable code for logs and metrics.
+//! ## Streaming
+//!
+//! [`deflate::Inflater`] takes input and output buffers you own and says
+//! where it stopped ([`Status`]); memory is fixed when it is built (about
+//! 11 KiB of tables plus a window of `2^window_bits` bytes), and every limit
+//! is checked before output is written.
+//!
+//! ```
+//! use compress_lib::deflate::{Inflater, Status};
+//!
+//! let mut inflater = Inflater::new().with_window_bits(12)?;
+//! let mut out = [0u8; 4096];
+//! let p = inflater.finish(&[0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00], &mut out)?;
+//! assert_eq!(p.status, Status::Done);
+//! assert_eq!(&out[..p.produced], b"hello");
+//! # Ok::<(), compress_lib::Error>(())
+//! ```
+//!
+//! Every failure is an [`Error`] with a matchable [`ErrorKind`] and a stable
+//! code for logs and metrics. [`checksum`] has CRC-32 and Adler-32.
 //!
 //! ## Status
 //!
-//! `0.2.0`, the design lock: the complete planned API, each item with the
-//! version it arrives in, is `docs/API.md` in the
-//! [repository](https://github.com/jamesgober/compress-lib). The checksums,
-//! the error type, the limits, and the levels ship now; the raw DEFLATE
-//! inflater arrives in `0.3`, the deflater and the RFC 7692 helpers in `0.4`,
-//! zlib and gzip in `0.5`.
+//! `0.3.0`, the raw DEFLATE inflater. The deflater and the RFC 7692 helpers
+//! arrive in `0.4`, zlib and gzip in `0.5`; the complete planned API, each
+//! item with its version, is `docs/API.md` in the
+//! [repository](https://github.com/jamesgober/compress-lib).
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -59,14 +80,18 @@ extern crate alloc;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod checksum;
+pub mod deflate;
 
 mod error;
+mod inflate;
 mod level;
 mod limits;
+mod stream;
 
 pub use error::{Error, ErrorKind};
 pub use level::Level;
 pub use limits::Limits;
+pub use stream::{Progress, Status};
 
 #[cfg(test)]
 mod tests {

@@ -188,8 +188,6 @@ pub struct Error {
 
 impl Error {
     /// An error of `kind` found at input byte `offset`.
-    // The decoders (0.3) are the callers.
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) const fn new(kind: ErrorKind, offset: u64) -> Self {
         Self { kind, offset }

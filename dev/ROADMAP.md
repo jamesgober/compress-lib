@@ -21,15 +21,15 @@ Exit: `docs/API.md` lists the whole 1.0 API with the version of each item (D-010
 - [x] CRC-32 (slicing-by-16) and Adler-32 (deferred modulo), one-shot, streaming, `combine`.
 - [x] One new defence idea recorded.
 
-## v0.3.0 - Core: inflate
-API: DF-01, DF-02, DF-10 to DF-16 · ERR-01 to ERR-10.
+## v0.3.0 - Core: inflate (DONE, 2026-11-06)
+API: DF-01, DF-02, DF-10 to DF-19 (DF-17 to DF-19 brought forward from 0.4, D-024) · ERR-01 to ERR-10.
 Exit: every inflate edge case (E-1, E-3 to E-19) has a test; differential tests against miniz_oxide agree on every accept, reject, and output; streaming split invariance at every byte; counting-allocator proof; fuzz smoke in CI.
-- [ ] Bit reader, table builder (fixed tables at compile time), state machine, fast loop, window ring.
-- [ ] Limits checked per chunk (T-1, T-2), window bits 8 to 15 (T-4), linear work with tiny buffers (T-5, T-6), truncation and trailing data (T-12, T-13).
-- [ ] Fuzz targets `inflate_raw`, `inflate_split`.
+- [x] Bit reader, table builder (fixed tables at compile time), state machine, fast loop, window ring.
+- [x] Limits checked per chunk (T-1, T-2), window bits 8 to 15 (T-4), linear work with tiny buffers (T-5, T-6), truncation and trailing data (T-12, T-13).
+- [x] Fuzz targets `inflate_raw`, `inflate_split`.
 
 ## v0.4.0 - Extended: deflate and RFC 7692
-API: DF-03, DF-04, DF-17 to DF-19, DF-30 to DF-36 · MSG-01 to MSG-07 · ERR-10 (level).
+API: DF-03, DF-04, DF-30 to DF-36 · MSG-01 to MSG-07 · ERR-10 (level).
 Exit: round trips at every level, window, and flush pattern; miniz_oxide decodes all output; RFC 7692 section 7.2.3 vectors; ws-net's permessage-deflate can be built on it.
 - [ ] Stored, greedy, and lazy strategies; dynamic, fixed, and stored block choice; flush modes; dictionaries; window bits 8 to 15.
 - [ ] `message::Compressor`, `message::Decompressor`, context takeover on and off, `BFINAL` handling.

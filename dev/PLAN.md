@@ -4,7 +4,7 @@
 >
 > **Read order:** [`../REPS.md`](../REPS.md) &rarr; [`DIRECTIVES.md`](./DIRECTIVES.md) &rarr; **this file** &rarr; [`ROADMAP.md`](./ROADMAP.md).
 >
-> **Status:** design locked, `0.2.0` (2026-11-06): the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). The raw DEFLATE inflater is `0.3.0`.
+> **Status:** `0.3.0` (2026-11-06): the raw DEFLATE inflater ships; the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). The deflater and the RFC 7692 helpers are `0.4.0`.
 
 ---
 
@@ -418,7 +418,7 @@ Tier 3, `Deflater`:
 
 | Id | Threat | Defence | Attack test | Cost | Ver |
 |---|---|---|---|---|---|
-| T-1 | Decompression bomb: 1 KiB expands to gigabytes (undici CVE-2026-1526, libsoup CVE-2026-15709) | absolute output cap checked per chunk before writing; ratio cap optional | 1 KiB of compressed zeros (and a 10 MB bomb of nested stored/repeat blocks) fails with `OutputLimit` at exactly the cap; peak memory at most cap plus one chunk (counting allocator) | 1 compare per chunk | 0.3 |
+| T-1 | Decompression bomb: 1 KiB expands to gigabytes (undici CVE-2026-1526, libsoup CVE-2026-15709) | absolute output cap checked per chunk before writing; ratio cap optional | 64 MiB of zeros compressed to 64 KiB fails with `OutputLimit` at exactly the cap; peak memory at most 1.5 times the cap plus the tables (counting allocator, D-021) | 1 compare per chunk | 0.3 |
 | T-2 | Ratio bomb hidden under the absolute cap across many requests | ratio cap after a floor | stream at 1000:1 fails at `ratio_floor` with `max_ratio 100` | 1 multiply per chunk | 0.3 |
 | T-3 | Malformed Huffman tables (over-subscribed, incomplete, huge repeat runs) causing out-of-bounds reads or loops | table builder validates Kraft sums, counts, and repeat bounds; entries tagged invalid | crafted tables for each case return the matching error; fuzz | none at decode time | 0.3 |
 | T-4 | Distance beyond output or window (reads uninitialised or stale memory in C decoders) | checked against produced plus dictionary and the window | distances 1 past each bound fail with `DistanceTooFar` | 1 compare per match | 0.3 |
@@ -530,6 +530,7 @@ One new defence idea per version: hypothesis, method, expected cost.
 
 | Version | Idea | Method | Expected cost |
 |---|---|---|---|
+| 0.3 | An inflater that accepts what zlib rejects is a parser differential: a proxy and a backend can disagree on what a body contains. Holding the inflater to zlib's exact acceptance rules (incomplete codes, missing end-of-block, over-long repeats) closes that gap. | Differential tests and the `inflate_raw` fuzz target compare the verdict and output with zlib (through zlib-rs) on corrupted and random streams. | none at run time (D-018) |
 | 0.2 | A checksum that is merely "verified" can still be skipped by a caller who forgets to finish the stream; the framing decoders verify the trailer inside `finish`, and the one-shot functions always call it, so no caller-facing path returns data without its checksum checked. | 0.5 tests: every Tier 1 decoder fed a stream with a flipped trailer byte fails, and no public decoder returns `Done` before the trailer is read. | none: the checksum runs anyway |
 | 0.1 | The ratio cap must count input the inflater has taken into its bit buffer, not input it has decoded, or an attacker can hold bytes pending and make the measured ratio look smaller than it is. | `total_in` counts bytes moved into the bit buffer; a test feeds one byte per call and checks the ratio error fires at the same output position as a one-shot call. | none: the counter exists anyway |
 
@@ -556,3 +557,10 @@ One new defence idea per version: hypothesis, method, expected cost.
 | D-015 | 2026-11-06 | `ErrorKind::InvalidState` added to the locked set (E-26: `next_stream` before `Done`) and `Error::offset` counts compressed input since the engine started or was reset | errors must say where; state misuse must be an error, never a panic |
 | D-016 | 2026-11-06 | CRC-32 by slicing-by-16 tables built at compile time (16 KiB static); Adler-32 with four lanes and deferred modulo (zlib's NMAX 5,552 per lane) | portable safe-Rust speed on every target; hardware CRC (PCLMULQDQ, ARMv8 CRC) needs `unsafe` intrinsics or runtime detection and is left to OD-1 |
 | D-017 | 2026-11-06 | `criterion` as a dev-dependency with default features off; competitor benchmarks stay in `bench-compare/` (0.6) | the crate's own baselines live with the code; competitors pull in C toolchains |
+| D-018 | 2026-11-06 | The inflater follows zlib's acceptance rules exactly: over-subscribed codes rejected; incomplete codes rejected except a single code of length 1 for literal/length or distance; the precode must be complete; end-of-block must have a code; HLIT above 286 and HDIST above 30 rejected | the same verdict as zlib everywhere avoids parser differentials between this crate and the C and zlib-rs decoders the rest of the web runs (idea 0.3); miniz_oxide is laxer on incomplete codes |
+| D-019 | 2026-11-06 | Output goes straight into the caller's buffer; history beyond it comes from a ring of `2^window_bits` bytes updated once per call; one-shot decoding allocates no ring; `decompress_vec` uses the vector as history for the whole call | no staging copy, `O(produced)` ring cost per call whatever the buffer sizes, and no 32 KiB window for one-shot callers |
+| D-020 | 2026-11-06 | zlib-rs joins miniz_oxide as a test-only oracle (dev-dependency and fuzz crate, never runtime): zlib-rs for exact verdicts, miniz_oxide for streams at every level | zlib's rules are the reference (D-018); zlib-rs is pure Rust, so the oracle needs no C toolchain |
+| D-021 | 2026-11-06 | `decompress_vec` grows by doubling, never past `max_output`; a reallocation can briefly hold the old buffer and the new one, so peak memory is at most 1.5 times the cap; the spec's "cap plus one chunk" is restated | chunk-sized exact growth would copy quadratically; doubling bounded by the cap keeps both copies and peak memory linear |
+| D-022 | 2026-11-06 | Once the cap is spent and the stream still has output pending, the inflater fails with `OutputLimit` even when the caller's buffer ended exactly at the cap | otherwise the vector API would ask for room it can never get and loop |
+| D-023 | 2026-11-06 | Fast loop: one branch-free eight-byte refill per symbol (libdeflate's method), a second literal per refill, eight-byte match copies for distances of eight or more; the slow path keeps the bit buffer clean above its count | the measured 0.3 baseline is ahead of miniz_oxide on most rows; tuning to the section 9 targets is 0.6 |
+| D-024 | 2026-11-06 | `Inflater::next_stream`, `set_dictionary`, and `memory_in_use` (DF-17 to DF-19) ship in 0.3 instead of 0.4 | they are inflater state only, done with the inflater, and ws-net can wire takeover against 0.3 |

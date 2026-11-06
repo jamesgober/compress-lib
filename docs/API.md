@@ -9,7 +9,7 @@ Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.2" }
+compress = { package = "compress-lib", version = "0.3" }
 ```
 
 ## Contents
@@ -167,6 +167,7 @@ Same shape as CRC-32 (`adler32`, `Adler32::{new, from_value, update, finish, len
 |---|---|
 | `deflate::decompress(&[u8]) -> Result<Vec<u8>, Error>` (DF-01) | 0.3 |
 | `deflate::decompress_with(&[u8], Limits) -> Result<Vec<u8>, Error>` (DF-02) | 0.3 |
+| `Inflater::finish_vec` (as `decompress_vec`, last input) | 0.3 |
 | `deflate::compress(&[u8]) -> Vec<u8>` (DF-03, level 6) | 0.4 |
 | `deflate::compress_with(&[u8], Level) -> Vec<u8>` (DF-04) | 0.4 |
 
@@ -184,9 +185,9 @@ The streaming decoder (DF-10 to DF-19). Push input, pull output, caller-owned bu
 | `decompress_vec(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<Progress, Error>` | appends, reserving at most 64 KiB at a time and never past the cap | 0.3 |
 | `is_done()`, `total_in()`, `total_out()`, `window_bits()`, `limits()` | | 0.3 |
 | `reset(&mut self)` | forget history and state, keep allocations | 0.3 |
-| `next_stream(&mut self) -> Result<(), Error>` | after `Done`, start a new stream keeping the window (`InvalidState` before `Done`) | 0.4 |
-| `set_dictionary(&mut self, &[u8]) -> Result<(), Error>` | preset history; only before any input | 0.4 |
-| `memory_in_use(&self) -> usize` | heap bytes held | 0.4 |
+| `next_stream(&mut self) -> Result<(), Error>` | after `Done`, start a new stream keeping the window (`InvalidState` before `Done`) | 0.3 |
+| `set_dictionary(&mut self, &[u8]) -> Result<(), Error>` | preset history; only before any input | 0.3 |
+| `memory_in_use(&self) -> usize` | heap bytes held | 0.3 |
 
 ```rust
 use compress::deflate::{Inflater, Status};

@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>unsafe</code> is forbidden. <code>no_std</code> with <code>alloc</code> when the default <code>std</code> feature is off.
     </p>
     <blockquote>
-        <strong>Status: <code>0.2.0</code>, design lock.</strong> The complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>, each item with its version. CRC-32, Adler-32, the error type, limits, and levels ship now; the raw DEFLATE inflater arrives in <code>0.3</code>, the deflater and the RFC 7692 helpers in <code>0.4</code>, zlib and gzip framing in <code>0.5</code>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: <code>0.3.0</code>, inflate.</strong> The raw DEFLATE inflater ships: streaming with caller-owned buffers, window bits 8 to 15, and output and ratio caps checked before every output chunk. It agrees with zlib on every accept, reject, and output in the differential tests. The deflater and the RFC 7692 helpers arrive in <code>0.4</code>, zlib and gzip framing in <code>0.5</code>; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -44,17 +44,31 @@ Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.2" }
+compress = { package = "compress-lib", version = "0.3" }
 ```
 
 Available now:
 
 ```rust
-let crc = compress::checksum::crc32(data);            // gzip's checksum
-let adler = compress::checksum::adler32(data);        // zlib's checksum
+let data = compress::deflate::decompress(&raw)?;      // raw DEFLATE, capped at 64 MiB
+let crc = compress::checksum::crc32(&data);           // gzip's checksum
 ```
 
-Planned (0.3 to 0.5), the shape every codec follows:
+Streaming, with buffers you own:
+
+```rust
+use compress::deflate::{Inflater, Status};
+
+let mut inflater = Inflater::new();                    // window 15, default limits
+let p = inflater.decompress(input, &mut output)?;     // push input, pull output
+match p.status {
+    Status::NeedsInput => { /* feed input[p.consumed..] and more */ }
+    Status::NeedsOutput => { /* drain output[..p.produced], call again */ }
+    _ => { /* Status::Done: the stream ended at input[p.consumed] */ }
+}
+```
+
+Planned (0.4 and 0.5), the same shape for every codec:
 
 ```rust
 let packed = compress::gzip::compress(body);          // Vec<u8>, level 6
