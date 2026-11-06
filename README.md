@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>unsafe</code> is forbidden. <code>no_std</code> with <code>alloc</code> when the default <code>std</code> feature is off.
     </p>
     <blockquote>
-        <strong>Status: <code>0.3.0</code>, inflate.</strong> The raw DEFLATE inflater ships: streaming with caller-owned buffers, window bits 8 to 15, and output and ratio caps checked before every output chunk. It agrees with zlib on every accept, reject, and output in the differential tests. The deflater and the RFC 7692 helpers arrive in <code>0.4</code>, zlib and gzip framing in <code>0.5</code>; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: <code>0.4.0</code>, deflate and RFC 7692.</strong> Raw DEFLATE both ways: the inflater (streaming, window bits 8 to 15, output and ratio caps checked before every output chunk, zlib's exact acceptance rules) and the deflater (levels 0 to 9, window bits 8 to 15, sync, full, and finish flushes, preset dictionaries), plus the <code>message</code> module for WebSocket permessage-deflate. zlib and gzip framing arrive in <code>0.5</code>; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -44,31 +44,44 @@ Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.3" }
+compress = { package = "compress-lib", version = "0.4" }
 ```
 
 Available now:
 
 ```rust
-let data = compress::deflate::decompress(&raw)?;      // raw DEFLATE, capped at 64 MiB
+let packed = compress::deflate::compress(data);        // raw DEFLATE, level 6
+let data = compress::deflate::decompress(&packed)?;   // capped at 64 MiB
 let crc = compress::checksum::crc32(&data);           // gzip's checksum
+```
+
+WebSocket permessage-deflate (RFC 7692), one direction each:
+
+```rust
+use compress::message::{Compressor, Decompressor, MessageConfig};
+
+let config = MessageConfig::new().with_window_bits(12);   // no context takeover by default
+let mut tx = Compressor::new(config)?;
+let mut rx = Decompressor::new(config)?;
+tx.compress_message(text, &mut payload)?;               // sync flush, tail removed
+rx.decompress_message(&payload, &mut message, max)?;    // budget checked while inflating
 ```
 
 Streaming, with buffers you own:
 
 ```rust
-use compress::deflate::{Inflater, Status};
+use compress::deflate::{Deflater, Flush, Inflater, Status};
 
-let mut inflater = Inflater::new();                    // window 15, default limits
-let p = inflater.decompress(input, &mut output)?;     // push input, pull output
-match p.status {
-    Status::NeedsInput => { /* feed input[p.consumed..] and more */ }
-    Status::NeedsOutput => { /* drain output[..p.produced], call again */ }
-    _ => { /* Status::Done: the stream ended at input[p.consumed] */ }
+let p = deflater.compress(input, &mut output, Flush::None)?;  // push input, pull output
+let q = inflater.decompress(input, &mut output)?;
+match q.status {
+    Status::NeedsInput => { /* feed input[q.consumed..] and more */ }
+    Status::NeedsOutput => { /* drain output[..q.produced], call again */ }
+    _ => { /* Status::Done: the stream ended at input[q.consumed] */ }
 }
 ```
 
-Planned (0.4 and 0.5), the same shape for every codec:
+Planned for 0.5, the same shape:
 
 ```rust
 let packed = compress::gzip::compress(body);          // Vec<u8>, level 6

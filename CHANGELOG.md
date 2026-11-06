@@ -13,6 +13,29 @@
 
 ---
 
+## [0.4.0] - 2026-11-06
+
+The raw DEFLATE encoder and the WebSocket permessage-deflate helpers.
+
+### Added
+
+- `deflate::Deflater`: streaming raw DEFLATE (RFC 1951) encoding at levels
+  0 to 9 (zlib's match-finder settings), window bits 8 to 15 (8 is a real
+  256-byte window), `Flush::{None, Sync, Full, Finish}`, `compress`,
+  `compress_vec`, `set_level` mid-stream, `set_dictionary`, `reset`,
+  `total_in`, `total_out`, `memory_in_use`. Each block is written as
+  stored, fixed, or dynamic Huffman, whichever is smallest. A round that
+  would make no progress fails with `InvalidState` instead of looping.
+- `deflate::compress` and `deflate::compress_with`.
+- `message`: `MessageConfig`, `Compressor` (`compress_message`: sync flush,
+  tail removed, context takeover on or off), `Decompressor`
+  (`decompress_message`, `decompress_fragment`: tail appended, output
+  budget checked while inflating, final blocks accepted, the vector as the
+  message's history so no window is kept without takeover).
+- Round-trip tests at every level, window, and flush pattern, checked by
+  zlib (through zlib-rs) and miniz_oxide; RFC 7692 section 7.2.3 vectors;
+  the `roundtrip` and `message` fuzz targets; the `deflate` benchmark.
+
 ## [0.3.0] - 2026-11-06
 
 The raw DEFLATE inflater.
@@ -73,7 +96,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jamesgober/compress-lib/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/compress-lib/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/compress-lib/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/compress-lib/releases/tag/v0.1.0

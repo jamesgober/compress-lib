@@ -13,36 +13,60 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.3" }`, and code reads `compress::`. One call decompresses a complete
-//! raw DEFLATE stream, capped at 64 MiB of output by default:
+//! = "0.4" }`, and code reads `compress::`. One call each way; decoding is
+//! capped at 64 MiB of output by default:
 //!
 //! ```
 //! use compress_lib as compress;
 //!
-//! let data = compress::deflate::decompress(&[0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00])?;
-//! assert_eq!(data, b"hello");
+//! let packed = compress::deflate::compress(b"hello, hello, hello");
+//! let data = compress::deflate::decompress(&packed)?;
+//! assert_eq!(data, b"hello, hello, hello");
 //!
 //! let small = compress::Limits::new().with_max_output(1 << 20);
-//! let data = compress::deflate::decompress_with(&[0x03, 0x00], small)?;
-//! assert!(data.is_empty());
+//! let fast = compress::deflate::compress_with(b"data", compress::Level::FAST);
+//! assert_eq!(compress::deflate::decompress_with(&fast, small)?, b"data");
+//! # Ok::<(), compress_lib::Error>(())
+//! ```
+//!
+//! ## WebSocket permessage-deflate
+//!
+//! [`message`] has the RFC 7692 rules: the sync-flush tail removed and put
+//! back, context takeover on or off, window bits 8 to 15, and the output
+//! budget checked while inflating.
+//!
+//! ```
+//! use compress_lib::message::{Compressor, Decompressor, MessageConfig};
+//!
+//! let config = MessageConfig::new().with_window_bits(10);
+//! let mut tx = Compressor::new(config)?;
+//! let mut rx = Decompressor::new(config)?;
+//! let mut wire = Vec::new();
+//! tx.compress_message(b"{\"op\":\"ping\"}", &mut wire)?;
+//! let mut text = Vec::new();
+//! rx.decompress_message(&wire, &mut text, 1 << 20)?;
+//! assert_eq!(text, b"{\"op\":\"ping\"}");
 //! # Ok::<(), compress_lib::Error>(())
 //! ```
 //!
 //! ## Streaming
 //!
-//! [`deflate::Inflater`] takes input and output buffers you own and says
-//! where it stopped ([`Status`]); memory is fixed when it is built (about
-//! 11 KiB of tables plus a window of `2^window_bits` bytes), and every limit
-//! is checked before output is written.
+//! [`deflate::Inflater`] and [`deflate::Deflater`] take buffers you own and
+//! say where they stopped ([`Status`]); memory is fixed when they are built,
+//! and every decoder limit is checked before output is written.
 //!
 //! ```
-//! use compress_lib::deflate::{Inflater, Status};
+//! use compress_lib::deflate::{Deflater, Flush, Inflater, Status};
+//!
+//! let mut deflater = Deflater::default();
+//! let mut packed = [0u8; 256];
+//! let p = deflater.compress(b"streamed", &mut packed, Flush::Finish)?;
+//! assert_eq!(p.status, Status::Done);
 //!
 //! let mut inflater = Inflater::new().with_window_bits(12)?;
-//! let mut out = [0u8; 4096];
-//! let p = inflater.finish(&[0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00], &mut out)?;
-//! assert_eq!(p.status, Status::Done);
-//! assert_eq!(&out[..p.produced], b"hello");
+//! let mut out = [0u8; 64];
+//! let q = inflater.finish(&packed[..p.produced], &mut out)?;
+//! assert_eq!(&out[..q.produced], b"streamed");
 //! # Ok::<(), compress_lib::Error>(())
 //! ```
 //!
@@ -51,9 +75,9 @@
 //!
 //! ## Status
 //!
-//! `0.3.0`, the raw DEFLATE inflater. The deflater and the RFC 7692 helpers
-//! arrive in `0.4`, zlib and gzip in `0.5`; the complete planned API, each
-//! item with its version, is `docs/API.md` in the
+//! `0.4.0`: raw DEFLATE both ways and the RFC 7692 helpers. zlib and gzip
+//! framing arrive in `0.5`; the complete planned API, each item with its
+//! version, is `docs/API.md` in the
 //! [repository](https://github.com/jamesgober/compress-lib).
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
@@ -81,6 +105,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod checksum;
 pub mod deflate;
+pub mod message;
 
 mod error;
 mod inflate;
