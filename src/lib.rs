@@ -13,19 +13,22 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.4" }`, and code reads `compress::`. One call each way; decoding is
+//! = "0.5" }`, and code reads `compress::`. One call each way; decoding is
 //! capped at 64 MiB of output by default:
 //!
 //! ```
 //! use compress_lib as compress;
 //!
-//! let packed = compress::deflate::compress(b"hello, hello, hello");
-//! let data = compress::deflate::decompress(&packed)?;
-//! assert_eq!(data, b"hello, hello, hello");
+//! let packed = compress::gzip::compress(b"hello, hello, hello");
+//! let body = compress::gzip::decompress(&packed)?;
+//! assert_eq!(body, b"hello, hello, hello");
+//!
+//! let z = compress::zlib::compress(b"zlib, which HTTP calls deflate");
+//! let raw = compress::deflate::compress_with(b"raw DEFLATE", compress::Level::FAST);
+//! assert_eq!(compress::decompress(&z)?, b"zlib, which HTTP calls deflate"); // gzip or zlib, detected
 //!
 //! let small = compress::Limits::new().with_max_output(1 << 20);
-//! let fast = compress::deflate::compress_with(b"data", compress::Level::FAST);
-//! assert_eq!(compress::deflate::decompress_with(&fast, small)?, b"data");
+//! assert_eq!(compress::deflate::decompress_with(&raw, small)?, b"raw DEFLATE");
 //! # Ok::<(), compress_lib::Error>(())
 //! ```
 //!
@@ -70,14 +73,19 @@
 //! # Ok::<(), compress_lib::Error>(())
 //! ```
 //!
+//! [`Decoder`] and [`Encoder`] take a [`Format`] chosen at run time (an HTTP
+//! layer picking by `Content-Encoding`); with the `std` feature, [`io`] wraps
+//! any of them around `Read` and `Write`.
+//!
 //! Every failure is an [`Error`] with a matchable [`ErrorKind`] and a stable
 //! code for logs and metrics. [`checksum`] has CRC-32 and Adler-32.
 //!
 //! ## Status
 //!
-//! `0.4.0`: raw DEFLATE both ways and the RFC 7692 helpers. zlib and gzip
-//! framing arrive in `0.5`; the complete planned API, each item with its
-//! version, is `docs/API.md` in the
+//! `0.5.0`, feature complete for 1.0: raw DEFLATE, zlib, and gzip both ways,
+//! the RFC 7692 helpers, format detection, and the `std::io` adapters.
+//! Optimisation, hardening, and the 1.0 audit follow; the complete planned
+//! API, each item with its version, is `docs/API.md` in the
 //! [repository](https://github.com/jamesgober/compress-lib).
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
@@ -105,15 +113,22 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod checksum;
 pub mod deflate;
+pub mod gzip;
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub mod io;
 pub mod message;
+pub mod zlib;
 
 mod error;
+mod format;
 mod inflate;
 mod level;
 mod limits;
 mod stream;
 
 pub use error::{Error, ErrorKind};
+pub use format::{Decoder, Encoder, Format, decompress, decompress_with};
 pub use level::Level;
 pub use limits::Limits;
 pub use stream::{Progress, Status};

@@ -46,3 +46,10 @@ path = "fuzz_targets/message.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "framing"
+path = "fuzz_targets/framing.rs"
+test = false
+doc = false
+bench = false

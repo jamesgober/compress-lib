@@ -13,6 +13,31 @@
 
 ---
 
+## [0.5.0] - 2026-11-06
+
+zlib and gzip framing, format detection, and the `std::io` adapters:
+feature complete for 1.0.
+
+### Added
+
+- `zlib`: `compress`, `compress_with`, `decompress`, `decompress_with`,
+  streaming `Decoder` (header checks, window limit, preset dictionaries by
+  id, Adler-32 verified) and `Encoder` (FLEVEL, FDICT, window bits 8 to
+  15).
+- `gzip`: `compress`, `compress_with`, `decompress`, `decompress_with`,
+  streaming `Decoder` (every header flag, FHCRC verified, CRC-32 and ISIZE
+  verified, multi-member with `max_members`, output cap across members,
+  header fields bounded by `max_header` and kept only on request, trailing
+  data refused unless allowed) and `Encoder` with `GzipHeader` (name,
+  comment, extra field, time stamp, OS; defaults that give the same bytes on
+  every platform).
+- `Format` with `detect`, the format-generic `Decoder` and `Encoder`, and
+  `compress_lib::decompress` / `decompress_with` (gzip or zlib, detected).
+- `io` (feature `std`): `Reader`, `Writer`, `Encoder`, `DecodeWriter`.
+- Interoperation tests with zlib (through zlib-rs) both ways for zlib and
+  gzip; CPython vectors; the `framing` fuzz target; the `gzip_file`,
+  `websocket_message`, and `http_body` examples.
+
 ## [0.4.0] - 2026-11-06
 
 The raw DEFLATE encoder and the WebSocket permessage-deflate helpers.
@@ -96,7 +121,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jamesgober/compress-lib/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/compress-lib/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/compress-lib/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/compress-lib/compare/v0.1.0...v0.2.0
