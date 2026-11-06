@@ -242,11 +242,20 @@ fn test_attack_t5_byte_by_byte_message_fragments_linear() {
         .unwrap()
         .compress_message(&text, &mut wire)
         .unwrap();
-    let mut rx = Decompressor::new(MessageConfig::new()).unwrap();
+    // The baseline pays the same per-call cost: the same bytes, one per
+    // call, through the slice API into a buffer sized up front.
+    let mut inflater = Inflater::new().with_limits(Limits::unlimited());
+    let mut flat = vec![0u8; text.len()];
+    let mut made = 0;
     let t = Instant::now();
-    let mut whole = Vec::new();
-    rx.decompress_message(&wire, &mut whole, 8 << 20).unwrap();
-    let one_shot = t.elapsed();
+    for b in &wire {
+        let p = inflater.decompress(&[*b], &mut flat[made..]).unwrap();
+        assert_eq!(p.consumed, 1);
+        made += p.produced;
+    }
+    let sliced = t.elapsed();
+    assert_eq!(&flat[..made], &text[..]);
+    let mut rx = Decompressor::new(MessageConfig::new()).unwrap();
     let t = Instant::now();
     let mut out = Vec::new();
     for (i, b) in wire.iter().enumerate() {
@@ -255,11 +264,11 @@ fn test_attack_t5_byte_by_byte_message_fragments_linear() {
     }
     let tiny = t.elapsed();
     assert_eq!(out, text);
-    // Zero-filling the message so far on every call (the 0.6 defect) made
-    // this about a thousand times slower than one call.
+    // Zero-filling the message so far on every call (the 0.6 defect) costs
+    // about a megabyte per call here, thousands of times the baseline.
     assert!(
-        tiny < one_shot * 100 + Duration::from_secs(2),
-        "one shot {one_shot:?}, byte by byte {tiny:?}"
+        tiny < sliced * 20 + Duration::from_secs(2),
+        "slice API byte by byte {sliced:?}, message byte by byte {tiny:?}"
     );
 }
 

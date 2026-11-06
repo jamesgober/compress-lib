@@ -13,6 +13,24 @@
 
 ---
 
+## [0.8.0] - 2026-11-06
+
+The alpha: the consumer paths end to end, and C zlib on both sides.
+
+### Added
+
+- `tests/consumers.rs`: WebSocket permessage-deflate under every
+  negotiated window size and takeover setting with messages split into
+  frames at random points, the per-message budget and the close codes it
+  maps to, prepared (broadcast) messages; HTTP bodies decoded in chunks of
+  any size and with two codings (`deflate, gzip`) by chained decoders;
+  sync-flushed streamed responses decodable after every event; encoder
+  reuse; a compile-time check that every engine is `Send` and `Sync`.
+- Interoperation with C zlib through CPython's `zlib` and `gzip` modules,
+  both directions, every format, levels 0, 1, 6, and 9, multi-member gzip
+  and sync points: `tests/interop/check.py`, the `interop` example, and a
+  CI job.
+
 ## [0.7.0] - 2026-11-06
 
 Hardening: attack tests, a soak, the threat model, and two fixes.
@@ -199,7 +217,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jamesgober/compress-lib/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/compress-lib/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/compress-lib/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/compress-lib/compare/v0.4.0...v0.5.0

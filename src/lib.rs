@@ -13,7 +13,7 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.7" }`, and code reads `compress::`. One call each way; decoding is
+//! = "0.8" }`, and code reads `compress::`. One call each way; decoding is
 //! capped at 64 MiB of output by default:
 //!
 //! ```
@@ -82,11 +82,12 @@
 //!
 //! ## Status
 //!
-//! `0.7.0`, hardened: an attack test per threat, a 4-hour soak, and
-//! `docs/SECURITY.md` (the threat model, each defence with its cost) in the
-//! [repository](https://github.com/jamesgober/compress-lib). Consumer runs
-//! and the 1.0 audit follow; the complete planned API, each item with its
-//! version, is `docs/API.md` there.
+//! `0.8.0`, alpha: the consumer paths (WebSocket permessage-deflate, HTTP
+//! content codings, streamed responses) exercised end to end, and
+//! interoperation with C zlib checked both ways in CI. The beta series and
+//! the 1.0 audit follow; the complete planned API, each item with its
+//! version, is `docs/API.md` in the
+//! [repository](https://github.com/jamesgober/compress-lib).
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
 #![cfg_attr(docsrs, feature(doc_cfg))]

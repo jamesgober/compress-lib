@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "compress-lib"
-version = "0.7.0"
+version = "0.8.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: the first release with edition 2024; nothing newer is needed
@@ -52,6 +52,10 @@ required-features = ["std"]
 
 [[example]]
 name = "gzip_file"
+required-features = ["std"]
+
+[[example]]
+name = "interop"
 required-features = ["std"]
 
 # The framing tests also cover the `std::io` adapters.
