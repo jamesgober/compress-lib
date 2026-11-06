@@ -28,12 +28,13 @@ Exit: every inflate edge case (E-1, E-3 to E-19) has a test; differential tests 
 - [x] Limits checked per chunk (T-1, T-2), window bits 8 to 15 (T-4), linear work with tiny buffers (T-5, T-6), truncation and trailing data (T-12, T-13).
 - [x] Fuzz targets `inflate_raw`, `inflate_split`.
 
-## v0.4.0 - Extended: deflate and RFC 7692
+## v0.4.0 - Extended: deflate and RFC 7692 (DONE, 2026-11-06)
 API: DF-03, DF-04, DF-30 to DF-36 · MSG-01 to MSG-07 · ERR-10 (level).
 Exit: round trips at every level, window, and flush pattern; miniz_oxide decodes all output; RFC 7692 section 7.2.3 vectors; ws-net's permessage-deflate can be built on it.
-- [ ] Stored, greedy, and lazy strategies; dynamic, fixed, and stored block choice; flush modes; dictionaries; window bits 8 to 15.
-- [ ] `message::Compressor`, `message::Decompressor`, context takeover on and off, `BFINAL` handling.
-- [ ] Threats T-9, T-10, T-14; fuzz targets `roundtrip` and `message`.
+- [x] Stored, greedy, and lazy strategies; dynamic, fixed, and stored block choice; flush modes; dictionaries; window bits 8 to 15.
+- [x] `message::Compressor`, `message::Decompressor`, context takeover on and off, `BFINAL` handling.
+- [x] Threats T-9, T-10, T-14; fuzz targets `roundtrip` and `message`.
+- Moved to 0.6 (D-031): deflate speed against the section 9 targets (sizes already match zlib; speed at level 1 measured well behind miniz_oxide and zlib-rs on the shared machine).
 
 ## v0.5.0 - Feature complete
 API: ZL-01, ZL-02, GZ-01 to GZ-03, FMT-01 to FMT-03, IO-01 to IO-03, LIM-05 · ERR-11 to ERR-15.

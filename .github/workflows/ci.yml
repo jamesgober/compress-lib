@@ -103,18 +103,18 @@ jobs:
         with:
           components: miri
       - uses: Swatinem/rust-cache@v2
-      # Isolation is off only so proptest can look for its regression files;
-      # the code under test does no I/O.
       # The checksums, the table builder, and the inflater's block, symbol,
-      # and window paths: small inputs, because Miri runs about a thousand
-      # times slower than native code.
+      # and window paths on small inputs; property tests are skipped, because
+      # Miri runs about a thousand times slower than native code. Isolation
+      # is off only so proptest can look for its regression files; the code
+      # under test does no I/O.
       - name: Miri (x86_64)
-        run: cargo miri test --lib -- --skip prop_ checksum:: tables:: test_inflate_fixed test_inflate_trailing test_inflate_dynamic test_inflate_reserved test_inflate_window_bits test_inflate_errors
+        run: "cargo miri test --lib -- --skip prop_ checksum:: tables:: test_inflate_fixed test_inflate_trailing test_inflate_dynamic test_inflate_reserved test_inflate_window_bits test_inflate_errors"
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
           PROPTEST_CASES: "8"
       - name: Miri (s390x, big-endian)
-        run: cargo miri test --lib --target s390x-unknown-linux-gnu -- --skip prop_ checksum:: tables:: test_inflate_fixed test_inflate_trailing test_inflate_dynamic test_inflate_reserved test_inflate_window_bits test_inflate_errors
+        run: "cargo miri test --lib --target s390x-unknown-linux-gnu -- --skip prop_ checksum:: tables:: test_inflate_fixed test_inflate_trailing test_inflate_dynamic test_inflate_reserved test_inflate_window_bits test_inflate_errors"
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
           PROPTEST_CASES: "8"

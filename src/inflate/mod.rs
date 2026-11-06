@@ -551,13 +551,53 @@ impl Inflater {
 
     fn run_vec(&mut self, input: &[u8], out: &mut Vec<u8>, last: bool) -> Result<Progress, Error> {
         let start = out.len();
+        let p = self.run_vec_from(input, out, start, last)?;
+        if self.keep_history {
+            self.save_history(&out[start..]);
+        }
+        Ok(p)
+    }
+
+    /// Decodes into `out`, treating `out[history_start..]` as this stream's
+    /// output so far (it is the history for back-references). The ring is
+    /// not updated; the caller records the history when it is done with it.
+    pub(crate) fn decompress_into(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        history_start: usize,
+        last: bool,
+    ) -> Result<Progress, Error> {
+        self.run_vec_from(input, out, history_start, last)
+    }
+
+    /// Records `data` as the newest history (when a window is kept).
+    pub(crate) fn remember(&mut self, data: &[u8]) {
+        if self.keep_history {
+            self.save_history(data);
+        }
+    }
+
+    /// Replaces the output cap.
+    pub(crate) fn set_max_output(&mut self, max: u64) {
+        self.limits = self.limits.with_max_output(max);
+    }
+
+    fn run_vec_from(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        start: usize,
+        last: bool,
+    ) -> Result<Progress, Error> {
+        let first = out.len();
         let mut consumed = 0;
         let status = loop {
             let have = out.len();
             let made = have - start;
             let cap_room = usize::try_from(self.limits.max_output().saturating_sub(self.total_out))
                 .unwrap_or(usize::MAX);
-            // Room offered per step: geometric (at least what this call has
+            // Room offered per step: geometric (at least what this stream has
             // produced) but at most 64 KiB ahead of it, and never past the cap.
             let want = cap_room.min(VEC_CHUNK.max(made));
             if out.capacity() - have < want && out.try_reserve_exact(want).is_err() {
@@ -579,10 +619,7 @@ impl Inflater {
                 }
             }
         };
-        if self.keep_history {
-            self.save_history(&out[start..]);
-        }
-        Ok(Progress::new(consumed, out.len() - start, status))
+        Ok(Progress::new(consumed, out.len() - first, status))
     }
 
     /// Records `newest` (this call's output) in the history ring.

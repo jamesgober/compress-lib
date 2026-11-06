@@ -4,7 +4,7 @@
 >
 > **Read order:** [`../REPS.md`](../REPS.md) &rarr; [`DIRECTIVES.md`](./DIRECTIVES.md) &rarr; **this file** &rarr; [`ROADMAP.md`](./ROADMAP.md).
 >
-> **Status:** `0.3.0` (2026-11-06): the raw DEFLATE inflater ships; the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). The deflater and the RFC 7692 helpers are `0.4.0`.
+> **Status:** `0.4.0` (2026-11-06): raw DEFLATE both ways and the RFC 7692 `message` helpers ship; the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). zlib and gzip framing are `0.5.0`.
 
 ---
 
@@ -184,18 +184,18 @@ Stateless row of standard 2.16: a codec. Deterministic, no process-local assumpt
 
 **Match finding.** Hash of 3 bytes (levels 1 to 3: 4 bytes, faster and better for text, as zlib-ng's `quick`), multiplicative hash, `head: [u16; 2^hash_bits]` and `prev: [u16; 2^window_bits]` chains for levels 2 to 9. Positions are stored relative to the window base and adjusted on slide.
 
-| Level | Strategy | Chain | Lazy | Nice | Good |
+| Level | Strategy | Good | Lazy (greedy: insert limit) | Nice | Chain |
 |---|---|---|---|---|---|
 | 0 | stored blocks | n/a | n/a | n/a | n/a |
-| 1 | greedy, one probe per hash, insert only match heads | 1 | 0 | 32 | n/a |
-| 2 | greedy | 4 | 0 | 16 | 4 |
-| 3 | greedy | 8 | 0 | 32 | 4 |
-| 4 | lazy | 16 | 4 | 16 | 4 |
-| 5 | lazy | 32 | 16 | 32 | 8 |
-| 6 (default) | lazy | 128 | 16 | 128 | 8 |
-| 7 | lazy | 256 | 32 | 128 | 8 |
-| 8 | lazy | 1024 | 128 | 258 | 32 |
-| 9 | lazy | 4096 | 258 | 258 | 32 |
+| 1 | greedy | 4 | 4 | 8 | 4 |
+| 2 | greedy | 4 | 5 | 16 | 8 |
+| 3 | greedy | 4 | 6 | 32 | 32 |
+| 4 | lazy | 4 | 4 | 16 | 16 |
+| 5 | lazy | 8 | 16 | 32 | 32 |
+| 6 (default) | lazy | 8 | 16 | 128 | 128 |
+| 7 | lazy | 8 | 32 | 128 | 256 |
+| 8 | lazy | 32 | 128 | 258 | 1024 |
+| 9 | lazy | 32 | 258 | 258 | 4096 |
 
 The table starts from zlib's configuration (so ratios are comparable) and is tuned in 0.6 against the corpus; tuning changes are decisions.
 
@@ -530,6 +530,7 @@ One new defence idea per version: hypothesis, method, expected cost.
 
 | Version | Idea | Method | Expected cost |
 |---|---|---|---|
+| 0.4 | A WebSocket decoder that tolerates any bytes after a final block lets a peer smuggle data the application never sees but intermediaries may log or forward; RFC 7692's own example has one zero byte there. Accept only zero padding after `BFINAL`, refuse anything else. | `test_message_trailing_after_final_block_rejected`: zero padding accepted, a nonzero byte is `TrailingData`; the `message` fuzz target. | one scan of the leftover bytes, at most a few (D-025) |
 | 0.3 | An inflater that accepts what zlib rejects is a parser differential: a proxy and a backend can disagree on what a body contains. Holding the inflater to zlib's exact acceptance rules (incomplete codes, missing end-of-block, over-long repeats) closes that gap. | Differential tests and the `inflate_raw` fuzz target compare the verdict and output with zlib (through zlib-rs) on corrupted and random streams. | none at run time (D-018) |
 | 0.2 | A checksum that is merely "verified" can still be skipped by a caller who forgets to finish the stream; the framing decoders verify the trailer inside `finish`, and the one-shot functions always call it, so no caller-facing path returns data without its checksum checked. | 0.5 tests: every Tier 1 decoder fed a stream with a flipped trailer byte fails, and no public decoder returns `Done` before the trailer is read. | none: the checksum runs anyway |
 | 0.1 | The ratio cap must count input the inflater has taken into its bit buffer, not input it has decoded, or an attacker can hold bytes pending and make the measured ratio look smaller than it is. | `total_in` counts bytes moved into the bit buffer; a test feeds one byte per call and checks the ratio error fires at the same output position as a one-shot call. | none: the counter exists anyway |
@@ -564,3 +565,11 @@ One new defence idea per version: hypothesis, method, expected cost.
 | D-022 | 2026-11-06 | Once the cap is spent and the stream still has output pending, the inflater fails with `OutputLimit` even when the caller's buffer ended exactly at the cap | otherwise the vector API would ask for room it can never get and loop |
 | D-023 | 2026-11-06 | Fast loop: one branch-free eight-byte refill per symbol (libdeflate's method), a second literal per refill, eight-byte match copies for distances of eight or more; the slow path keeps the bit buffer clean above its count | the measured 0.3 baseline is ahead of miniz_oxide on most rows; tuning to the section 9 targets is 0.6 |
 | D-024 | 2026-11-06 | `Inflater::next_stream`, `set_dictionary`, and `memory_in_use` (DF-17 to DF-19) ship in 0.3 instead of 0.4 | they are inflater state only, done with the inflater, and ws-net can wire takeover against 0.3 |
+| D-025 | 2026-11-06 | `message::Decompressor` accepts zero bytes after a final block and refuses anything else (`TrailingData`) | RFC 7692 section 7.2.3.4's example payload ends with one zero byte after the final block, and zlib-based receivers ignore it; nonzero bytes there have no meaning and are refused (idea 0.4) |
+| D-026 | 2026-11-06 | Level settings are zlib's table exactly (good, lazy, nice, chain); the earlier draft table is replaced | sizes comparable level for level with zlib, which the tests check (within 1.5% on text, in practice equal or smaller) |
+| D-027 | 2026-11-06 | Deflater window: a buffer of `max(2, 8192 / 2^bits)` windows; the full window is used for distances when the buffer holds three or more windows (bits 8 to 11), and `2^bits - 262` otherwise (zlib's MAX_DIST); positions start at 1 so position 0 can mean "none" in the 16-bit chains | 16-bit chains at every window size; RFC 7692's small windows get their whole window; the large-window loss is zlib's |
+| D-028 | 2026-11-06 | Hash bits `clamp(window bits + 1, 9, 15)`, symbol buffer `clamp(2^(bits + 1), 1024, 16384)` | small windows mean memory-constrained connections; their tables shrink with the window |
+| D-029 | 2026-11-06 | Every Huffman block carries at least two literal/length and two distance codes (dummy frequencies, as zlib's trees.c) | no decoder ever meets the single-code or empty-code special cases from this encoder |
+| D-030 | 2026-11-06 | `set_level` across level 0 ends the block first; from lazy to greedy it writes the held-back literal; any change clears the pending match | the strategies keep different state; a change must never drop or repeat a byte (found by `test_roundtrip_set_level_mid_stream`) |
+| D-031 | 2026-11-06 | Deflate speed tuning moves to 0.6 with the rest of the optimisation milestone; 0.4 ships with sizes at or below zlib's and speed recorded as a gap (level 1 about a third of miniz_oxide's on the shared machine) | correctness and ratio first; 0.6 is where the section 9 targets are met or the gap is published |
+| D-032 | 2026-11-06 | Level 0 writes a stored block whenever the window cannot take more input; `Deflater::compress` returns `InvalidState` if a round ever takes no input and makes no output instead of repeating | the property test found a stall at level 0 with a 4 KiB window after flushes; the guard turns any such state into an error, never a hang (cost: one tuple compare per round) |

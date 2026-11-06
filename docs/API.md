@@ -9,7 +9,7 @@ Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.3" }
+compress = { package = "compress-lib", version = "0.4" }
 ```
 
 ## Contents
@@ -221,7 +221,8 @@ The streaming encoder (DF-30 to DF-37).
 | `with_window_bits(self, u8) -> Result<Self, Error>` | 8 to 15; never emits a longer distance | 0.4 |
 | `compress(&mut self, input, output, Flush) -> Result<Progress, Error>` | `Done` when the flush point is fully written | 0.4 |
 | `compress_vec(&mut self, input, &mut Vec<u8>, Flush) -> Result<Progress, Error>` | appends until the flush point is written | 0.4 |
-| `set_level(&mut self, Level)` | from the next block | 0.4 |
+| `set_level(&mut self, Level)` | applies to data not yet compressed | 0.4 |
+| `level()`, `window_bits()` | | 0.4 |
 | `reset`, `set_dictionary`, `total_in`, `total_out`, `memory_in_use` | | 0.4 |
 | `MemoryConfig` | block symbol buffer and hash size | 0.6 |
 
@@ -246,8 +247,8 @@ RFC 7692 section 7.2 on top of raw DEFLATE (MSG-01 to MSG-07, 0.4).
 | `MessageConfig::new()` | window bits 15, no context takeover, level 1 |
 | `with_window_bits(u8)`, `with_context_takeover(bool)`, `with_level(Level)` | per direction: the sender's `*_max_window_bits` and `*_no_context_takeover` |
 | `Compressor::new(MessageConfig)`; `compress_message(&mut self, msg: &[u8], out: &mut Vec<u8>) -> Result<usize, Error>` | sync flush, trailing `00 00 FF FF` removed; returns bytes appended |
-| `Decompressor::new(MessageConfig)`; `decompress_message(&mut self, payload: &[u8], out: &mut Vec<u8>, max: usize) -> Result<usize, Error>` | appends the tail, writes into `out` with `max` checked per chunk; accepts a final block and starts the next message with the window kept (takeover) or cleared |
-| `decompress_fragment(&mut self, fragment, last: bool, out, max)` | the same for a message arriving in frames |
+| `Decompressor::new(MessageConfig)`; `decompress_message(&mut self, payload: &[u8], out: &mut Vec<u8>, max: usize) -> Result<usize, Error>` | appends the tail, writes into `out` with `max` checked per chunk; accepts a final block (zero padding after it, as in RFC 7692 7.2.3.4, is allowed; other bytes are `TrailingData`) and starts the next message with the window kept (takeover) or cleared |
+| `decompress_fragment(&mut self, fragment, last: bool, out, max)` | the same for a message arriving in frames; every fragment appends to the same vector, which is the message's history (`InvalidState` if it changed) |
 | `reset()`, `memory_in_use()` | |
 
 ```rust
