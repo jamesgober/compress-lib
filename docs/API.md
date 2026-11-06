@@ -9,7 +9,7 @@ Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.5" }
+compress = { package = "compress-lib", version = "0.6" }
 ```
 
 ## Contents
@@ -224,7 +224,8 @@ The streaming encoder (DF-30 to DF-37).
 | `set_level(&mut self, Level)` | applies to data not yet compressed | 0.4 |
 | `level()`, `window_bits()` | | 0.4 |
 | `reset`, `set_dictionary`, `total_in`, `total_out`, `memory_in_use` | | 0.4 |
-| `MemoryConfig` | block symbol buffer and hash size | 0.6 |
+| `with_memory(self, MemoryConfig) -> Self`; `MemoryConfig::new()`, `with_hash_bits(u8)` (8 to 16), `with_block_symbols(usize)` (256 to 65,536), `hash_bits()`, `block_symbols()` (0 means chosen from the window bits) | hash table and symbol buffer sizes | 0.6 |
+| `MessageConfig::with_memory(MemoryConfig)`, `memory()` | the same for the per-message compressor | 0.6 |
 
 ### `Progress`, `Status`, `Flush`
 

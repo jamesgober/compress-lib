@@ -277,19 +277,24 @@ fn test_message_rfc7692_vectors() {
     tx.compress_message(b"Hello", &mut wire).unwrap();
     assert_eq!(wire, [0xF2, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00]);
 
-    // 7.2.3.2: the second "Hello" with takeover is one back-reference.
+    // 7.2.3.2: the second "Hello" with takeover refers back into the first.
+    // The RFC's bytes (from zlib) are a literal and a 4-byte match, because
+    // zlib cannot match at position 0; this encoder matches all 5 bytes, one
+    // byte shorter. Both decode.
     let mut tx = Compressor::new(MessageConfig::new().with_context_takeover(true)).unwrap();
     let mut first = Vec::new();
     tx.compress_message(b"Hello", &mut first).unwrap();
     let mut second = Vec::new();
     tx.compress_message(b"Hello", &mut second).unwrap();
-    assert_eq!(second, [0xF2, 0x00, 0x11, 0x00, 0x00]);
-    let mut rx = Decompressor::new(MessageConfig::new().with_context_takeover(true)).unwrap();
-    let mut a = Vec::new();
-    rx.decompress_message(&first, &mut a, 100).unwrap();
-    let mut b = Vec::new();
-    rx.decompress_message(&second, &mut b, 100).unwrap();
-    assert_eq!((a.as_slice(), b.as_slice()), (&b"Hello"[..], &b"Hello"[..]));
+    assert!(second.len() < 5, "{second:02x?}");
+    for second in [&second[..], &[0xF2, 0x00, 0x11, 0x00, 0x00]] {
+        let mut rx = Decompressor::new(MessageConfig::new().with_context_takeover(true)).unwrap();
+        let mut a = Vec::new();
+        rx.decompress_message(&first, &mut a, 100).unwrap();
+        let mut b = Vec::new();
+        rx.decompress_message(second, &mut b, 100).unwrap();
+        assert_eq!((a.as_slice(), b.as_slice()), (&b"Hello"[..], &b"Hello"[..]));
+    }
 
     // 7.2.3.3: a stored block; 7.2.3.4: BFINAL set; 7.2.3.5: two blocks.
     let mut rx = Decompressor::new(MessageConfig::new()).unwrap();
@@ -490,4 +495,35 @@ fn test_roundtrip_level_0_full_window_never_stalls() {
             .unwrap();
         assert_eq!(inflate_strict(&packed, bits), data, "bits {bits}");
     }
+}
+
+#[test]
+fn test_roundtrip_memory_config_every_size() {
+    use compress_lib::deflate::MemoryConfig;
+    let data = &corpus()[4][..80_000];
+    for hash_bits in [8u8, 10, 12, 16] {
+        for symbols in [256usize, 1000, 4096, 65_536] {
+            let memory = MemoryConfig::new()
+                .with_hash_bits(hash_bits)
+                .with_block_symbols(symbols);
+            for level in [1u8, 6] {
+                let mut d = Deflater::new(Level::new(level).unwrap())
+                    .with_window_bits(12)
+                    .unwrap()
+                    .with_memory(memory);
+                let mut out = Vec::new();
+                d.compress_vec(data, &mut out, Flush::Finish).unwrap();
+                assert_eq!(
+                    inflate_strict(&out, 12),
+                    data,
+                    "{hash_bits}/{symbols}/{level}"
+                );
+            }
+        }
+    }
+    let lean = Deflater::new(Level::FAST)
+        .with_window_bits(9)
+        .unwrap()
+        .with_memory(MemoryConfig::new().with_block_symbols(1024));
+    assert!(lean.memory_in_use() < Deflater::new(Level::FAST).memory_in_use() / 4);
 }

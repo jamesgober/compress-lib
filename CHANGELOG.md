@@ -13,6 +13,42 @@
 
 ---
 
+## [0.6.0] - 2026-11-06
+
+Optimisation, measured against miniz_oxide, zlib-rs, and flate2.
+
+### Added
+
+- `deflate::MemoryConfig` (`with_hash_bits`, `with_block_symbols`) and
+  `Deflater::with_memory`; `MessageConfig::with_memory`.
+- `bench-compare/`: benchmarks against miniz_oxide, zlib-rs, and flate2
+  over each backend, with a hosted-runner workflow (`Bench`).
+- `docs/PERFORMANCE.md` with the measured numbers and the method.
+
+### Changed
+
+- The match finders keep their state in locals and compare four bytes at a
+  time; the block writer writes each symbol's code and extra bits at once.
+  The match decisions at levels 2 to 9 are the same as in 0.5.
+- Level 1 probes one candidate in a 4,096-entry hash table and searches
+  more sparsely through long runs without matches (incompressible input):
+  faster, and its output is still smaller than miniz_oxide's and zlib-rs's
+  level 1.
+- `Deflater::reset` clears only the hash entries a short stream used, so
+  per-message compression (no context takeover) no longer clears 64 KiB
+  each time.
+- Vector decoding starts with room for four times the input (at most
+  64 KiB) instead of 64 KiB, so small messages decode without a large
+  allocation.
+- Encoder positions start at 1, so a match can refer to the first byte of
+  the stream (the second "Hello" of RFC 7692 section 7.2.3.2 is now one
+  match, a byte shorter than zlib's encoding).
+
+### Fixed
+
+- The counting-allocator test counts only its own thread's allocations;
+  the test harness allocating on another thread could fail it.
+
 ## [0.5.0] - 2026-11-06
 
 zlib and gzip framing, format detection, and the `std::io` adapters:
@@ -121,7 +157,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jamesgober/compress-lib/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/compress-lib/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/compress-lib/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/compress-lib/compare/v0.2.0...v0.3.0

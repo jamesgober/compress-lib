@@ -28,7 +28,7 @@ use alloc::vec::Vec;
 
 use crate::{
     Error, ErrorKind, Level,
-    deflate::{Deflater, Flush, Inflater},
+    deflate::{Deflater, Flush, Inflater, MemoryConfig},
 };
 
 /// The four bytes a sync flush ends with, removed by the sender and put
@@ -63,6 +63,7 @@ pub struct MessageConfig {
     window_bits: u8,
     context_takeover: bool,
     level: Level,
+    memory: MemoryConfig,
 }
 
 impl MessageConfig {
@@ -82,6 +83,7 @@ impl MessageConfig {
             window_bits: 15,
             context_takeover: false,
             level: Level::FAST,
+            memory: MemoryConfig::new(),
         }
     }
 
@@ -124,6 +126,35 @@ impl MessageConfig {
     pub const fn with_level(mut self, level: Level) -> Self {
         self.level = level;
         self
+    }
+
+    /// Sizes the compressor's hash table and symbol buffer (see
+    /// [`MemoryConfig`]); the decompressor is not affected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::{deflate::MemoryConfig, message::MessageConfig};
+    ///
+    /// let config = MessageConfig::new().with_memory(MemoryConfig::new().with_hash_bits(10));
+    /// assert_eq!(config.memory().hash_bits(), 10);
+    /// ```
+    #[must_use]
+    pub const fn with_memory(mut self, memory: MemoryConfig) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    /// The compressor's memory settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(compress_lib::message::MessageConfig::new().memory().hash_bits(), 0);
+    /// ```
+    #[must_use]
+    pub const fn memory(&self) -> MemoryConfig {
+        self.memory
     }
 
     /// The window bits.
@@ -206,7 +237,9 @@ impl Compressor {
     /// assert!(Compressor::new(MessageConfig::new().with_window_bits(16)).is_err());
     /// ```
     pub fn new(config: MessageConfig) -> Result<Self, Error> {
-        let deflater = Deflater::new(config.level).with_window_bits(config.window_bits)?;
+        let deflater = Deflater::new(config.level)
+            .with_window_bits(config.window_bits)?
+            .with_memory(config.memory);
         Ok(Self {
             deflater,
             takeover: config.context_takeover,
