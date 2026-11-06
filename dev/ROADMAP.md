@@ -50,8 +50,13 @@ Exit: `bench-compare/` against miniz_oxide, zlib-rs, and flate2 backends on Linu
 - [x] Match finders and block writer tuned (D-041, D-042); level 1 redefined (D-040); small-message paths (D-043, D-044); `MemoryConfig` (DF-37).
 - [x] Gap recorded (D-045): compression at levels 6 and 9 is behind zlib-rs, which uses SIMD and `unsafe`; levels 1 and 6 are at or ahead of miniz_oxide; decoding leads miniz_oxide on most inputs.
 
-## v0.7.0 - Hardening
+## v0.7.0 - Hardening (DONE, 2026-11-06)
 Exit: every fuzz target complete; 24 h fuzz run of the inflater targets without a finding; attack test per threat (`tests/attacks.rs`); 4 h soak flat; `docs/SECURITY.md`.
+- [x] Fuzz targets complete: `inflate_raw`, `inflate_split`, `roundtrip`, `message`, `framing`; smoke on every push, ten minutes per target nightly.
+- [ ] 24 h fuzz run of the inflater targets (moved to before 0.9, D-050): restarted on the fixed code (D-054), clean so far.
+- [x] Attack test per threat (`tests/attacks.rs`).
+- [x] 4 h soak on the fixed code: 446,443 random round trips through every format, level, window, and flush pattern, with the live heap flat at 21,318 bytes and a peak of 1,731,540 bytes.
+- [x] `docs/SECURITY.md`.
 
 ## v0.8.0 - Alpha
 Exit: ws-net permessage-deflate on a branch passes Autobahn sections 12 and 13 strict; http-net body decode and serve-net response encode examples run; consumer issues fixed.

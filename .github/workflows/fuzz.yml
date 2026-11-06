@@ -1,0 +1,41 @@
+name: Fuzz
+
+# Ten minutes per target every night, and on demand. The 24-hour runs
+# before a beta are done on a dedicated machine (dev/PLAN.md, section 10).
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }}, 10 min)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [inflate_raw, inflate_split, roundtrip, message, framing]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Run
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus"
+          cargo fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} "$RUNNER_TEMP/corpus" -- -max_total_time=600 -max_len=8192
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/

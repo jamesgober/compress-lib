@@ -13,6 +13,48 @@
 
 ---
 
+## [0.7.0] - 2026-11-06
+
+Hardening: attack tests, a soak, the threat model, and two fixes.
+
+### Added
+
+- `tests/attacks.rs`: one attack test per threat T-1 to T-14 of the plan
+  (bombs in every format, ratio bombs, malformed tables, distances beyond
+  the data or window, tiny buffers, empty blocks and members, gzip header
+  floods, corrupted checksums, cross-message compression oracles, memory per
+  engine, arbitrary input, truncation, trailing data, adversarial encoder
+  input).
+- `tests/soak.rs` (ignored by default): random round trips through every
+  format, level, window, and flush pattern with a heap check.
+- `docs/SECURITY.md`: the threat model, each defence with its cost and its
+  test, and guidance on limits and compression side channels.
+- A nightly fuzz workflow (ten minutes per target).
+- `wipe()` on `Inflater`, `Deflater`, `message::Compressor`, and
+  `message::Decompressor`: zeroes the history, tables, and buffers (spare
+  capacity included) for connections that carried secrets (threat T-15).
+
+### Fixed
+
+- Vector decoding (`decompress_vec`, `finish_vec`, the zlib and gzip
+  decoders, and `message::Decompressor`) zero-filled everything the stream
+  had produced so far on every call, so a WebSocket message fed one
+  compressed byte per call cost quadratic CPU (a 16 MiB message took about
+  15 seconds instead of 13 ms). Each call now costs `O(input + output)`
+  (threat T-5). The encoders' vector paths zero-filled all spare capacity
+  on every call; they now fill only the step's room.
+- `message::Decompressor` accepted a message whose last block was cut short
+  (a stored block missing bytes, a Huffman block without its end code); with
+  context takeover the next message then decoded as garbage. A message must
+  now end on a block boundary once its `00 00 FF FF` tail is appended, or
+  it is `UnexpectedEnd` (threat T-12, RFC 7692 section 7.2.2). A sender
+  that leaves the tail in place, which RFC 7692 forbids, is refused too.
+
+### Verified
+
+- A 24-hour fuzz run of the decoder targets on the fixed code is clean so far and finishes before 0.9.
+- A 4-hour soak on the fixed code: 446,443 random round trips through every format, level, window, and flush pattern, with the live heap flat at 21,318 bytes and a peak of 1,731,540 bytes.
+
 ## [0.6.0] - 2026-11-06
 
 Optimisation, measured against miniz_oxide, zlib-rs, and flate2.
@@ -157,7 +199,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jamesgober/compress-lib/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/compress-lib/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/compress-lib/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/compress-lib/compare/v0.3.0...v0.4.0

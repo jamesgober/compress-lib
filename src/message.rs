@@ -43,6 +43,13 @@ const TAIL: [u8; 4] = [0x00, 0x00, 0xFF, 0xFF];
 /// | context takeover | off | `server_no_context_takeover` / `client_no_context_takeover` absent |
 /// | level | 1 | (local choice) |
 ///
+/// Idle connections: without takeover nothing carries over between
+/// messages, so an idle connection can drop its engines and build new ones
+/// when traffic returns (construction allocates the sizes below once, about
+/// a microsecond for a decompressor). With takeover the window is
+/// connection state and must be kept; [`Compressor::wipe`] and
+/// [`Decompressor::wipe`] zero it when the connection ends.
+///
 /// Memory per direction: without takeover a [`Decompressor`] holds only its
 /// decode tables (about 11 KiB, no window); with takeover it adds the window
 /// (`2^window_bits` bytes). A [`Compressor`] holds a deflater sized by the
@@ -290,6 +297,24 @@ impl Compressor {
         Ok(out.len() - start)
     }
 
+    /// Zeroes the compressor's window, hash chains, and buffers (they hold
+    /// plaintext of earlier messages), keeping the allocations; see
+    /// [`Deflater::wipe`] for what "zeroes" can promise without `unsafe`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::message::{Compressor, MessageConfig};
+    ///
+    /// let mut tx = Compressor::new(MessageConfig::new().with_context_takeover(true))?;
+    /// tx.compress_message(b"token=secret", &mut Vec::new())?;
+    /// tx.wipe();
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    pub fn wipe(&mut self) {
+        self.deflater.wipe();
+    }
+
     /// Forgets the window (for a connection that restarts its context).
     ///
     /// # Examples
@@ -395,7 +420,10 @@ impl Decompressor {
     /// # Errors
     ///
     /// `OutputLimit` past `max`; `TrailingData` for nonzero bytes after a
-    /// final block; any decoding error. After an error the decompressor is reset
+    /// final block; `UnexpectedEnd` when the message, with the
+    /// `00 00 FF FF` tail appended, does not end on a block boundary (a
+    /// block cut short, or a sender that left the tail in place); any
+    /// decoding error. After an error the decompressor is reset
     /// (the connection should be failed anyway).
     ///
     /// # Examples
@@ -494,8 +522,20 @@ impl Decompressor {
             ));
         }
         if last && !self.inflater.is_done() {
-            self.inflater
+            let t = self
+                .inflater
                 .decompress_into(&TAIL, out, open.start, false)?;
+            // The tail is the empty stored block a sync flush ends with, so
+            // after it the message must sit on a block boundary (RFC 7692
+            // section 7.2.2). A block cut short (a stored block missing
+            // bytes, a Huffman block without its end code) would otherwise
+            // pass, and with context takeover corrupt the next message.
+            if t.consumed != TAIL.len() || !self.inflater.at_block_boundary() {
+                return Err(Error::new(
+                    ErrorKind::UnexpectedEnd,
+                    self.inflater.total_in(),
+                ));
+            }
         }
         let produced = open.produced + (out.len() - before);
         if !last {
@@ -512,6 +552,24 @@ impl Decompressor {
             self.inflater.reset();
         }
         Ok(out.len() - before)
+    }
+
+    /// Zeroes the decompressor's window and decode tables and forgets any
+    /// open message, keeping the allocations; see [`Inflater::wipe`]. The
+    /// message vectors are the caller's to wipe.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::message::{Decompressor, MessageConfig};
+    ///
+    /// let mut rx = Decompressor::new(MessageConfig::new().with_context_takeover(true))?;
+    /// rx.wipe();
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    pub fn wipe(&mut self) {
+        self.open = None;
+        self.inflater.wipe();
     }
 
     /// Forgets the window and any open message.
