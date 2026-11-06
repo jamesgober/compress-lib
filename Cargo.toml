@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "compress-lib"
-version = "0.2.0"
+version = "0.3.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: the first release with edition 2024; nothing newer is needed
@@ -45,6 +45,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 name = "compress_lib"
 path = "src/lib.rs"
 
+# The example reports errors through `std::io`.
+[[example]]
+name = "streaming"
+required-features = ["std"]
+
 # `cfg(fuzzing)` is set by cargo-fuzz for the entry points in `__fuzz`.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
@@ -72,9 +77,18 @@ std = []
 proptest = { version = "1", default-features = false, features = ["std"] }
 # Benchmarks (criterion baselines for every hot path).
 criterion = { version = "0.5", default-features = false }
+# Differential oracles, tests only: miniz_oxide (output on valid streams)
+# and zlib-rs (zlib's exact accept and reject rules). Never runtime
+# dependencies (dev/PLAN.md, D-004).
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+zlib-rs = { version = "0.6", default-features = false, features = ["rust-allocator"] }
 
 [[bench]]
 name = "checksum"
+harness = false
+
+[[bench]]
+name = "inflate"
 harness = false
 
 

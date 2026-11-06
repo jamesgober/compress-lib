@@ -1,0 +1,34 @@
+[package]
+name = "compress-lib-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+compress-lib = { path = ".." }
+# Reference decoder for the differential targets (zlib's exact rules).
+zlib-rs = { version = "0.6", default-features = false, features = ["rust-allocator"] }
+
+# Keeps this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+# One target per decoder entry point (dev/PLAN.md section 10).
+
+[[bin]]
+name = "inflate_raw"
+path = "fuzz_targets/inflate_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "inflate_split"
+path = "fuzz_targets/inflate_split.rs"
+test = false
+doc = false
+bench = false

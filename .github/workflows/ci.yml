@@ -103,21 +103,45 @@ jobs:
         with:
           components: miri
       - uses: Swatinem/rust-cache@v2
-      # Isolation is off only so proptest can look for its regression files;
-      # the code under test does no I/O.
-      # Property tests are skipped: proptest's generators run about a
-      # thousand times slower under Miri, and the unit tests cover the same
-      # code paths.
+      # The checksums, the table builder, and the inflater's block, symbol,
+      # and window paths on small inputs; property tests are skipped, because
+      # Miri runs about a thousand times slower than native code. Isolation
+      # is off only so proptest can look for its regression files; the code
+      # under test does no I/O.
       - name: Miri (x86_64)
-        run: cargo miri test --lib -- --skip prop_
+        run: "cargo miri test --lib -- --skip prop_ checksum:: tables:: test_inflate_fixed test_inflate_trailing test_inflate_dynamic test_inflate_reserved test_inflate_window_bits test_inflate_errors"
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
           PROPTEST_CASES: "8"
       - name: Miri (s390x, big-endian)
-        run: cargo miri test --lib --target s390x-unknown-linux-gnu -- --skip prop_
+        run: "cargo miri test --lib --target s390x-unknown-linux-gnu -- --skip prop_ checksum:: tables:: test_inflate_fixed test_inflate_trailing test_inflate_dynamic test_inflate_reserved test_inflate_window_bits test_inflate_errors"
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
           PROPTEST_CASES: "8"
+
+  fuzz-smoke:
+    name: Fuzz (smoke, 30 s per target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # install-action's cargo-fuzz is a musl build, and cargo-fuzz defaults to
+      # its own target, where AddressSanitizer cannot run: name the target.
+      - name: Run every target
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in $(cargo fuzz list); do
+            mkdir -p "$RUNNER_TEMP/corpus/$target"
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$target" "$RUNNER_TEMP/corpus/$target" -- -max_total_time=30 -max_len=4096
+          done
 
   dependencies:
     name: No runtime dependencies

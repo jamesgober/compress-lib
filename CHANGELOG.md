@@ -13,6 +13,27 @@
 
 ---
 
+## [0.3.0] - 2026-11-06
+
+The raw DEFLATE inflater.
+
+### Added
+
+- `deflate::Inflater`: streaming raw DEFLATE (RFC 1951) decoding with
+  caller-owned buffers (`decompress`, `finish`, `decompress_vec`,
+  `finish_vec`), window bits 8 to 15 enforced exactly, `Limits` checked
+  before every output chunk, sticky errors, `reset`, `next_stream` (a new
+  stream keeping the window, for RFC 7692 takeover), `set_dictionary`,
+  `total_in`, `total_out`, `memory_in_use`.
+- `deflate::decompress` and `deflate::decompress_with`: one call, truncation
+  and trailing data reported.
+- `Progress` and `Status` for every streaming call.
+- `ErrorKind::AllocationFailed`: vector growth uses `try_reserve`.
+- Differential tests against zlib (through zlib-rs) and miniz_oxide,
+  counting-allocator tests, the `inflate_raw` and `inflate_split` fuzz
+  targets with a fuzz smoke job in CI, the `inflate` benchmark, and the
+  `streaming` example.
+
 ## [0.2.0] - 2026-11-06
 
 The design lock and the first code: checksums, errors, limits, and levels.
@@ -52,6 +73,7 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jamesgober/compress-lib/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/compress-lib/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/compress-lib/releases/tag/v0.1.0
