@@ -777,3 +777,47 @@ fn test_inflate_wipe_zeroes_window_and_tables() {
         Status::Done
     );
 }
+
+extern crate std;
+
+std::thread_local! {
+    static ZERO_FILLED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+/// Counts the bytes the vector path zero-fills on this thread.
+pub(super) fn count_zero_fill(n: usize) {
+    ZERO_FILLED.with(|z| z.set(z.get() + n));
+}
+
+#[test]
+fn test_vec_path_zero_fill_linear_in_byte_by_byte_fragments() {
+    use crate::message::{Compressor, Decompressor, MessageConfig};
+    let mut x = 7u32;
+    let text: Vec<u8> = (0..1 << 20)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            b"abcdefgh ijk\n"[(x % 13) as usize]
+        })
+        .collect();
+    let mut wire = Vec::new();
+    Compressor::new(MessageConfig::new())
+        .unwrap()
+        .compress_message(&text, &mut wire)
+        .unwrap();
+    let mut rx = Decompressor::new(MessageConfig::new()).unwrap();
+    let mut out = Vec::new();
+    ZERO_FILLED.with(|z| z.set(0));
+    for (i, b) in wire.iter().enumerate() {
+        rx.decompress_fragment(&[*b], i + 1 == wire.len(), &mut out, 2 << 20)
+            .unwrap();
+    }
+    assert_eq!(out, text);
+    // Each call zero-fills its first step (at least 256 bytes) and at most
+    // four times what it produces; filling the output made so far on every
+    // call would be about `wire.len() * text.len() / 2`, gigabytes here.
+    let filled = ZERO_FILLED.with(core::cell::Cell::get);
+    let bound = 4 * text.len() + 512 * (wire.len() + 1);
+    assert!(filled <= bound, "zero-filled {filled}, bound {bound}");
+}
