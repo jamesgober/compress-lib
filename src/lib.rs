@@ -13,7 +13,7 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.5" }`, and code reads `compress::`. One call each way; decoding is
+//! = "0.6" }`, and code reads `compress::`. One call each way; decoding is
 //! capped at 64 MiB of output by default:
 //!
 //! ```
@@ -82,11 +82,11 @@
 //!
 //! ## Status
 //!
-//! `0.5.0`, feature complete for 1.0: raw DEFLATE, zlib, and gzip both ways,
-//! the RFC 7692 helpers, format detection, and the `std::io` adapters.
-//! Optimisation, hardening, and the 1.0 audit follow; the complete planned
-//! API, each item with its version, is `docs/API.md` in the
-//! [repository](https://github.com/jamesgober/compress-lib).
+//! `0.6.0`, optimisation: measured against miniz_oxide, zlib-rs, and flate2
+//! (`docs/PERFORMANCE.md` in the
+//! [repository](https://github.com/jamesgober/compress-lib)). Hardening and
+//! the 1.0 audit follow; the complete planned API, each item with its
+//! version, is `docs/API.md` there.
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
 #![cfg_attr(docsrs, feature(doc_cfg))]

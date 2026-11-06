@@ -43,8 +43,12 @@ Exit: every FR-1 to FR-16 met; files produced by GNU gzip and zlib decode; T-6 (
 - [x] Interoperation with zlib both ways; CPython gzip vectors; T-6 (members), T-7 (header cap), T-8 (checksums) tests (`tests/framing.rs`).
 - [x] Fuzz target `framing`; examples `gzip_file`, `websocket_message`, `http_body`.
 
-## v0.6.0 - Optimisation
+## v0.6.0 - Optimisation (DONE, 2026-11-06)
 Exit: `bench-compare/` against miniz_oxide, zlib-rs, and flate2 backends on Linux, macOS, and Windows runners; `docs/PERFORMANCE.md` with measured numbers; `PLAN.md` section 9 targets met or the gap recorded with its reason; `MemoryConfig` (DF-37).
+- [x] `bench-compare/` (miniz_oxide, zlib-rs, flate2 over C zlib and zlib-rs) and the hosted `Bench` workflow on Linux, macOS, and Windows.
+- [x] `docs/PERFORMANCE.md` with measured numbers.
+- [x] Match finders and block writer tuned (D-041, D-042); level 1 redefined (D-040); small-message paths (D-043, D-044); `MemoryConfig` (DF-37).
+- [x] Gap recorded (D-045): compression at levels 6 and 9 is behind zlib-rs, which uses SIMD and `unsafe`; levels 1 and 6 are at or ahead of miniz_oxide; decoding leads miniz_oxide on most inputs.
 
 ## v0.7.0 - Hardening
 Exit: every fuzz target complete; 24 h fuzz run of the inflater targets without a finding; attack test per threat (`tests/attacks.rs`); 4 h soak flat; `docs/SECURITY.md`.

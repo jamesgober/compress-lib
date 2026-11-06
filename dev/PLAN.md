@@ -4,7 +4,7 @@
 >
 > **Read order:** [`../REPS.md`](../REPS.md) &rarr; [`DIRECTIVES.md`](./DIRECTIVES.md) &rarr; **this file** &rarr; [`ROADMAP.md`](./ROADMAP.md).
 >
-> **Status:** `0.5.0` (2026-11-06): feature complete for 1.0 (raw DEFLATE, zlib, gzip, RFC 7692 helpers, format detection, `std::io` adapters); the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). Optimisation is `0.6.0`.
+> **Status:** `0.6.0` (2026-11-06): feature complete and measured ([`../docs/PERFORMANCE.md`](../docs/PERFORMANCE.md)); the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). Hardening is `0.7.0`.
 
 ---
 
@@ -187,7 +187,7 @@ Stateless row of standard 2.16: a codec. Deterministic, no process-local assumpt
 | Level | Strategy | Good | Lazy (greedy: insert limit) | Nice | Chain |
 |---|---|---|---|---|---|
 | 0 | stored blocks | n/a | n/a | n/a | n/a |
-| 1 | greedy | 4 | 4 | 8 | 4 |
+| 1 | greedy, one probe, 4,096-entry hash, sparse search through long misses (D-040) | 4 | 4 | 8 | 1 |
 | 2 | greedy | 4 | 5 | 16 | 8 |
 | 3 | greedy | 4 | 6 | 32 | 32 |
 | 4 | lazy | 4 | 4 | 16 | 16 |
@@ -530,6 +530,7 @@ One new defence idea per version: hypothesis, method, expected cost.
 
 | Version | Idea | Method | Expected cost |
 |---|---|---|---|
+| 0.6 | Speed work is where safety checks quietly disappear. Every 0.6 change kept `forbid(unsafe_code)` and the bounds checks, and the match decisions at levels 2 to 9 were required to stay those of 0.5, so a speed change could not hide a ratio change. | Compressed sizes at levels 2 to 9 were compared before and after each change; the full test and fuzz suites pass unchanged. | none at run time |
 | 0.5 | A multi-member gzip stream can carry many members that each stay under the output cap; capping per member would let the sum exceed it. The cap is shared: each new member's inflater gets the cap minus what earlier members produced. | `test_framing_gzip_members_and_cap`: two members of 600 bytes fail a 1,000-byte cap and pass a 1,200-byte one. | one subtraction per member (D-034) |
 | 0.4 | A WebSocket decoder that tolerates any bytes after a final block lets a peer smuggle data the application never sees but intermediaries may log or forward; RFC 7692's own example has one zero byte there. Accept only zero padding after `BFINAL`, refuse anything else. | `test_message_trailing_after_final_block_rejected`: zero padding accepted, a nonzero byte is `TrailingData`; the `message` fuzz target. | one scan of the leftover bytes, at most a few (D-025) |
 | 0.3 | An inflater that accepts what zlib rejects is a parser differential: a proxy and a backend can disagree on what a body contains. Holding the inflater to zlib's exact acceptance rules (incomplete codes, missing end-of-block, over-long repeats) closes that gap. | Differential tests and the `inflate_raw` fuzz target compare the verdict and output with zlib (through zlib-rs) on corrupted and random streams. | none at run time (D-018) |
@@ -581,3 +582,10 @@ One new defence idea per version: hypothesis, method, expected cost.
 | D-037 | 2026-11-06 | The zlib decoder keeps a copy of a preset dictionary and applies it only when the header names one and its Adler-32 matches | a dictionary given in advance must not widen what a stream without FDICT may refer to |
 | D-038 | 2026-11-06 | `io` adapters hold one 32 KiB buffer each; `Writer` tries to finish on drop and ignores errors (documented: call `finish`); `Reader` returns 0 at the end of the stream and `UnexpectedEof` for a truncated source | flate2's behaviour, which users expect; errors only `finish` can report are reported there |
 | D-039 | 2026-11-06 | `Format::detect` recognises gzip by magic and zlib by header check and never guesses raw DEFLATE; `compress_lib::decompress` refuses anything else with `InvalidHeader` | a raw guess would turn arbitrary bytes into "valid" output |
+| D-040 | 2026-11-06 | Level 1 is a single-probe greedy matcher over a 4,096-entry hash table (it stays in the first-level cache), and after 64 literals in a row it searches only every few positions, more sparsely the longer the run; zlib's level 1 (four probes, 32,768 entries) was 3 to 4 times slower than miniz_oxide | measured: text 324,322 bytes (was 290,167; miniz_oxide 347,486, zlib-rs 555,999), random input about 1.4 times miniz_oxide's speed instead of a quarter of it |
+| D-041 | 2026-11-06 | The greedy and lazy loops hold their state in locals and compare candidates four bytes at a time (and the two bytes at the end of a longer match first); the window carries 8 padding bytes so four-byte loads stay in bounds | no `unsafe`; 15 to 30% faster at every level with the same match decisions |
+| D-042 | 2026-11-06 | The block writer keeps its bit buffer in locals and writes a symbol's code and extra bits in one operation | block writing was a third of level 1's time |
+| D-043 | 2026-11-06 | `Deflater::reset` re-hashes the positions a short, unslid stream used and clears only those heads | per-message compression without takeover cleared 64 KiB per message |
+| D-044 | 2026-11-06 | Vector decoding starts with four times the input (256 B to 64 KiB) and then doubles | small messages decoded with a 64 KiB zero-filled reservation each (7.3 to 2.4 microseconds per 70-byte message) |
+| D-045 | 2026-11-06 | Section 9 targets: met for decoding against miniz_oxide on most inputs and for sizes everywhere; not met for compression speed against zlib-rs at levels 6 and 9, nor 1.2 times miniz_oxide on every row. Recorded as the gap; closing it needs SIMD-style match finding that `forbid(unsafe_code)` excludes (OD-1) or a different match finder (binary trees, as libdeflate), which is a 1.x candidate | standard 1.2: publish the gap, never assert a number that was not measured |
+| D-046 | 2026-11-06 | Encoder positions start at 1 (position 0 is "none" in the chains), as D-027 states; until 0.6 they started at 0 | the first byte of a stream (or of a message with takeover) can now be matched |

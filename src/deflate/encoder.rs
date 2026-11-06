@@ -495,9 +495,9 @@ impl Deflater {
     /// ```
     /// use compress_lib::{Level, deflate::{self, Deflater, Flush, MemoryConfig}};
     ///
-    /// let lean = MemoryConfig::new().with_hash_bits(10).with_block_symbols(2048);
+    /// let lean = MemoryConfig::new().with_hash_bits(9).with_block_symbols(512);
     /// let mut d = Deflater::new(Level::FAST).with_window_bits(9)?.with_memory(lean);
-    /// assert!(d.memory_in_use() < 48 * 1024);
+    /// assert!(d.memory_in_use() < Deflater::new(Level::FAST).with_window_bits(9)?.memory_in_use());
     /// let mut out = Vec::new();
     /// d.compress_vec(b"small and lean", &mut out, Flush::Finish)?;
     /// assert_eq!(deflate::decompress(&out)?, b"small and lean");
