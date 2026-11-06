@@ -1,0 +1,82 @@
+# =============================================================================
+#  R E P S   ·   compress-lib
+# =============================================================================
+[package]
+name    = "compress-lib"
+version = "0.1.0"
+
+# Minimum Supported Rust Version (MSRV)
+# 1.85: the first release with edition 2024; nothing newer is needed
+# (dev/PLAN.md, D-002).
+rust-version = "1.85"
+edition = "2024"
+
+# License
+license = "Apache-2.0 OR MIT"
+
+# Readme
+readme = "README.md"
+
+# Description
+description = "DEFLATE, zlib, and gzip for Rust services: streaming and sans-IO with bounded memory, hard limits against decompression bombs, WebSocket permessage-deflate (RFC 7692) support, no unsafe code, and zero third-party dependencies."
+
+# Keywords (5 max)
+keywords = ["deflate", "gzip", "zlib", "compression", "inflate"]
+
+# Categories
+categories = ["compression", "no-std", "encoding"]
+
+# Links
+homepage      = "https://github.com/jamesgober/compress-lib"
+repository    = "https://github.com/jamesgober/compress-lib"
+documentation = "https://docs.rs/compress-lib"
+
+# Authors
+authors = ["James Gober <me@jamesgober.com>"]
+
+# The fuzz crate and the competitor benchmarks stay in the repository only.
+exclude = ["/fuzz/", "/bench-compare/", "/tests/data/"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "compress_lib"
+path = "src/lib.rs"
+
+# `cfg(fuzzing)` is set by cargo-fuzz for the entry points in `__fuzz`.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
+
+# FEATURE FLAGS
+# #################################
+[features]
+default = ["std"]
+
+# `std::io` adapters. Without it the crate is `no_std` with `alloc`.
+std = []
+
+
+# DEPENDENCIES
+# #################################
+[dependencies]
+# None, in every feature combination (dev/PLAN.md, D-004).
+
+
+# DEV DEPENDENCIES
+# #################################
+[dev-dependencies]
+# Property tests (REPS: proptest for every invariant).
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+
+# RELEASE PROFILE
+# #################################
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+panic         = "abort"
+strip         = "symbols"

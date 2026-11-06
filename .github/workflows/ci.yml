@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # Run every JS action on Node.js 24 ahead of GitHub's forced migration,
+  # silencing "Node.js 20 actions are deprecated" runner warnings.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }} / ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86_64 and aarch64 on every OS: macos-latest is aarch64 only, so
+        # macos-15-intel covers x86_64 macOS.
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-15-intel
+          - windows-latest
+          - windows-11-arm
+        rust: [stable, "1.85"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (default features)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - name: Test (default features)
+        run: cargo test
+      - name: Test (all features)
+        run: cargo test --all-features
+      - name: Test (no default features)
+        run: cargo test --no-default-features
+      - name: Build examples
+        run: cargo build --examples
+      # Both modes: a doc link to a feature-gated item breaks only when that
+      # feature is off.
+      - name: Doc (default features)
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+      - name: Doc (all features)
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  cross:
+    name: Check (${{ matrix.target }} / ${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 32-bit, big-endian, wasm, and a bare-metal target for no_std: the
+        # bit reader packs bytes into words, so width and byte order matter.
+        target:
+          - i686-unknown-linux-gnu
+          - s390x-unknown-linux-gnu
+          - wasm32-unknown-unknown
+          - thumbv7em-none-eabi
+        rust: [stable, "1.85"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Check (no default features)
+        run: cargo check --target ${{ matrix.target }} --no-default-features
+      - name: Check (default features)
+        if: matrix.target != 'thumbv7em-none-eabi'
+        run: cargo check --target ${{ matrix.target }}
+
+  miri:
+    name: Miri (big-endian and little-endian)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      # Isolation is off only so proptest can look for its regression files;
+      # the code under test does no I/O.
+      - name: Miri (x86_64)
+        run: cargo miri test --lib
+        env:
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+          PROPTEST_CASES: "8"
+      - name: Miri (s390x, big-endian)
+        run: cargo miri test --lib --target s390x-unknown-linux-gnu
+        env:
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+          PROPTEST_CASES: "8"
+
+  dependencies:
+    name: No runtime dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The normal dependency tree is the crate alone
+        shell: bash
+        run: |
+          set -euo pipefail
+          for flags in "" "--all-features" "--no-default-features"; do
+            count=$(cargo tree -e normal --prefix none $flags | sort -u | wc -l)
+            if [ "$count" -ne 1 ]; then
+              echo "compress-lib has no runtime dependencies (dev/PLAN.md, D-004):"
+              cargo tree -e normal $flags
+              exit 1
+            fi
+          done
+          echo "No runtime dependency in any feature mode."
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        run: cargo package
+
+  security:
+    name: Security (audit + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+      - name: Generate lockfile
+        run: cargo generate-lockfile
+      - name: Audit
+        run: cargo audit
+      - name: Deny
+        run: cargo deny check
