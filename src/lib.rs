@@ -13,7 +13,7 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.6" }`, and code reads `compress::`. One call each way; decoding is
+//! = "0.7" }`, and code reads `compress::`. One call each way; decoding is
 //! capped at 64 MiB of output by default:
 //!
 //! ```
@@ -82,10 +82,10 @@
 //!
 //! ## Status
 //!
-//! `0.6.0`, optimisation: measured against miniz_oxide, zlib-rs, and flate2
-//! (`docs/PERFORMANCE.md` in the
-//! [repository](https://github.com/jamesgober/compress-lib)). Hardening and
-//! the 1.0 audit follow; the complete planned API, each item with its
+//! `0.7.0`, hardened: an attack test per threat, a 4-hour soak, and
+//! `docs/SECURITY.md` (the threat model, each defence with its cost) in the
+//! [repository](https://github.com/jamesgober/compress-lib). Consumer runs
+//! and the 1.0 audit follow; the complete planned API, each item with its
 //! version, is `docs/API.md` there.
 
 #![doc(html_root_url = "https://docs.rs/compress-lib")]
