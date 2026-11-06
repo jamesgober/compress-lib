@@ -256,8 +256,11 @@ fn test_consumer_engines_are_send_and_sync() {
     check::<Encoder>();
     check::<Compressor>();
     check::<Decompressor>();
-    check::<compress_lib::io::Reader<&[u8]>>();
-    check::<compress_lib::io::Writer<Vec<u8>>>();
+    #[cfg(feature = "std")]
+    {
+        check::<compress_lib::io::Reader<&[u8]>>();
+        check::<compress_lib::io::Writer<Vec<u8>>>();
+    }
     check::<compress_lib::Error>();
     check::<Limits>();
 }

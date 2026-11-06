@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>unsafe</code> is forbidden. <code>no_std</code> with <code>alloc</code> when the default <code>std</code> feature is off.
     </p>
     <blockquote>
-        <strong>Status: <code>0.6.0</code>, optimisation.</strong> Feature complete (raw DEFLATE, zlib, gzip, RFC 7692 helpers, format detection, <code>std::io</code>) and measured against miniz_oxide, zlib-rs, and flate2 in <a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>: decoding is faster than miniz_oxide on most inputs, compressed sizes match or beat both, and compression speed is where the remaining gap is. Hardening (<code>0.7</code>) comes next; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: <code>0.8.0</code>, alpha.</strong> Feature complete, measured (<a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>), hardened (<a href="./docs/SECURITY.md"><code>docs/SECURITY.md</code></a>), and exercised the way WebSocket, HTTP, and file servers use it, with every stream checked against C zlib in both directions. The beta series (<code>0.9</code>) and the 1.0 audit come next; the complete planned API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -44,7 +44,7 @@ Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.6" }
+compress = { package = "compress-lib", version = "0.8" }
 ```
 
 One call each way, capped at 64 MiB of output by default:

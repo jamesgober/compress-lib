@@ -50,11 +50,19 @@ Exit: `bench-compare/` against miniz_oxide, zlib-rs, and flate2 backends on Linu
 - [x] Match finders and block writer tuned (D-041, D-042); level 1 redefined (D-040); small-message paths (D-043, D-044); `MemoryConfig` (DF-37).
 - [x] Gap recorded (D-045): compression at levels 6 and 9 is behind zlib-rs, which uses SIMD and `unsafe`; levels 1 and 6 are at or ahead of miniz_oxide; decoding leads miniz_oxide on most inputs.
 
-## v0.7.0 - Hardening
+## v0.7.0 - Hardening (DONE, 2026-11-06)
 Exit: every fuzz target complete; 24 h fuzz run of the inflater targets without a finding; attack test per threat (`tests/attacks.rs`); 4 h soak flat; `docs/SECURITY.md`.
+- [x] Fuzz targets complete: `inflate_raw`, `inflate_split`, `roundtrip`, `message`, `framing`; smoke on every push, ten minutes per target nightly.
+- [ ] 24 h fuzz run of the inflater targets (moved to before 0.9, D-050): restarted on the fixed code (D-054), clean so far.
+- [x] Attack test per threat (`tests/attacks.rs`).
+- [x] 4 h soak on the fixed code: 446,443 random round trips through every format, level, window, and flush pattern, with the live heap flat at 21,318 bytes and a peak of 1,731,540 bytes.
+- [x] `docs/SECURITY.md`.
 
-## v0.8.0 - Alpha
+## v0.8.0 - Alpha (DONE, 2026-11-06)
 Exit: ws-net permessage-deflate on a branch passes Autobahn sections 12 and 13 strict; http-net body decode and serve-net response encode examples run; consumer issues fixed.
+- [x] The consumer paths, called as ws-net, http-net, and serve-net call them (`tests/consumers.rs`); the two issues ws-net's review of 0.6.0 found (quadratic CPU from byte-by-byte fragments, a cut-short final block accepted) are fixed in 0.7.0 (D-054), with attack tests T-5 and T-12.
+- [x] Interoperation with C zlib both ways in CI (CPython's `zlib` and `gzip`).
+- Moved out (D-050): permessage-deflate inside ws-net with Autobahn sections 12 and 13 is ws-net's own milestone, built in its repository against the published `message` API; this crate's side is the RFC 7692 codec and its tests here.
 
 ## v0.9.x - Beta and polish
 Exit: API audit (names, `#[must_use]`, `#[non_exhaustive]`, Tier 1 first), docs audit (every claim matches the build), `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, `docs/STABILITY-1.0.md` drafted, release candidates; nothing open except the 1.0 decision.
