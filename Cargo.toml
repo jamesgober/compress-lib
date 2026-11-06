@@ -54,6 +54,10 @@ required-features = ["std"]
 name = "gzip_file"
 required-features = ["std"]
 
+[[example]]
+name = "interop"
+required-features = ["std"]
+
 # The framing tests also cover the `std::io` adapters.
 [[test]]
 name = "framing"

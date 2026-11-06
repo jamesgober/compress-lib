@@ -143,6 +143,25 @@ jobs:
             cargo fuzz run --target x86_64-unknown-linux-gnu "$target" "$RUNNER_TEMP/corpus/$target" -- -max_total_time=30 -max_len=4096
           done
 
+  interop:
+    name: Interop with C zlib (CPython)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # CPython's zlib and gzip modules are C zlib: each side decodes every
+      # stream the other wrote, at levels 0, 1, 6, and 9, in all formats.
+      - name: Both directions
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/interop"
+          python3 tests/interop/check.py write "$dir"
+          cargo run -q --example interop -- read "$dir"
+          cargo run -q --example interop -- write "$dir"
+          python3 tests/interop/check.py read "$dir"
+
   dependencies:
     name: No runtime dependencies
     runs-on: ubuntu-latest
