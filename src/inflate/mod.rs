@@ -601,6 +601,12 @@ impl Inflater {
         self.run_vec_from(input, out, history_start, last)
     }
 
+    /// Whether the decoder is waiting for a block header at a byte boundary,
+    /// with no bits left over: where a sync-flushed message must end.
+    pub(crate) fn at_block_boundary(&self) -> bool {
+        self.state == State::Header && self.bitcnt == 0
+    }
+
     /// Records `data` as the newest history (when a window is kept).
     pub(crate) fn remember(&mut self, data: &[u8]) {
         if self.keep_history {
@@ -622,23 +628,36 @@ impl Inflater {
     ) -> Result<Progress, Error> {
         let first = out.len();
         let mut consumed = 0;
+        // Room offered per step: a first guess from this call's input (four
+        // times it, 256 B to 64 KiB), doubling only after the step filled
+        // up, never past the cap. Each call zero-fills O(input + output)
+        // bytes, never the stream's earlier output (T-16).
+        let mut step = input.len().saturating_mul(4).clamp(256, VEC_CHUNK);
         let status = loop {
             let have = out.len();
             let made = have - start;
             let cap_room = usize::try_from(self.limits.max_output().saturating_sub(self.total_out))
                 .unwrap_or(usize::MAX);
-            // Room offered per step: a first guess from the input (four times
-            // it, at most 64 KiB), then doubling what this stream has
-            // produced, never past the cap. Small messages stay small.
-            let guess = (input.len() - consumed)
-                .saturating_mul(4)
-                .clamp(256, VEC_CHUNK);
-            let want = cap_room.min(made.max(guess));
-            if out.capacity() - have < want && out.try_reserve_exact(want).is_err() {
-                return Err(self.fail(ErrorKind::AllocationFailed, 0));
+            let want = cap_room.min(step);
+            if out.capacity() - have < want {
+                // Grow the vector geometrically (as `Vec` does) so that many
+                // small calls reallocate O(log n) times, but never past what
+                // the cap still allows this stream to produce. Once the next
+                // doubling would pass the cap, go straight to it: a last
+                // small step would hold two buffers near the cap at once
+                // (T-1).
+                let limit = have.saturating_add(cap_room);
+                let mut target = (have + want).max(out.capacity().saturating_mul(2));
+                if target.saturating_mul(2) > limit {
+                    target = limit;
+                }
+                if out.try_reserve_exact(target - have).is_err() {
+                    return Err(self.fail(ErrorKind::AllocationFailed, 0));
+                }
             }
-            let room = (out.capacity() - have).min(want);
-            out.resize(have + room, 0);
+            #[cfg(test)]
+            tests::count_zero_fill(want);
+            out.resize(have + want, 0);
             match self.run(&input[consumed..], &mut out[start..], made, last) {
                 Ok((c, p, status)) => {
                     out.truncate(have + p);
@@ -646,6 +665,7 @@ impl Inflater {
                     if status != Status::NeedsOutput {
                         break status;
                     }
+                    step = step.saturating_mul(2);
                 }
                 Err(e) => {
                     out.truncate(have);

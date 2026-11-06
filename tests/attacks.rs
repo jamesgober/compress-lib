@@ -226,6 +226,43 @@ fn test_attack_t5_tiny_buffers_linear() {
     );
 }
 
+/// T-5: a WebSocket message fed one compressed byte per call costs about
+/// what one call costs, through the vector path every message decoder uses.
+#[test]
+fn test_attack_t5_byte_by_byte_message_fragments_linear() {
+    let mut x = 11u32;
+    let text: Vec<u8> = (0..4 << 20)
+        .map(|_| {
+            b"abcdefgh ijk
+"[(next(&mut x) % 13) as usize]
+        })
+        .collect();
+    let mut wire = Vec::new();
+    Compressor::new(MessageConfig::new())
+        .unwrap()
+        .compress_message(&text, &mut wire)
+        .unwrap();
+    let mut rx = Decompressor::new(MessageConfig::new()).unwrap();
+    let t = Instant::now();
+    let mut whole = Vec::new();
+    rx.decompress_message(&wire, &mut whole, 8 << 20).unwrap();
+    let one_shot = t.elapsed();
+    let t = Instant::now();
+    let mut out = Vec::new();
+    for (i, b) in wire.iter().enumerate() {
+        rx.decompress_fragment(&[*b], i + 1 == wire.len(), &mut out, 8 << 20)
+            .unwrap();
+    }
+    let tiny = t.elapsed();
+    assert_eq!(out, text);
+    // Zero-filling the message so far on every call (the 0.6 defect) made
+    // this about a thousand times slower than one call.
+    assert!(
+        tiny < one_shot * 100 + Duration::from_secs(2),
+        "one shot {one_shot:?}, byte by byte {tiny:?}"
+    );
+}
+
 /// T-6: inputs that produce nothing still cost bounded work.
 #[test]
 fn test_attack_t6_empty_blocks_and_members_bounded() {
@@ -392,6 +429,87 @@ fn test_attack_t12_truncation_detected() {
             "gzip {cut}"
         );
     }
+}
+
+/// T-12: a WebSocket message whose last block is cut short is refused, with
+/// and without context takeover, and a takeover stream that refused one
+/// decodes the next good message correctly.
+#[test]
+fn test_attack_t12_truncated_message_block_refused() {
+    let cut: [&[u8]; 3] = [
+        // A stored block claiming 1,000 bytes that carries five.
+        &[0x00, 0xE8, 0x03, 0x17, 0xFC, b'h', b'e', b'l', b'l', b'o'],
+        // A fixed Huffman block without its end code.
+        &[0xF2, 0x48],
+        // "Hello" with its end code and the flush's block header removed.
+        &[0xF2, 0x48, 0xCD, 0xC9, 0xC9],
+    ];
+    for takeover in [false, true] {
+        let config = MessageConfig::new().with_context_takeover(takeover);
+        for payload in cut {
+            let mut rx = Decompressor::new(config).unwrap();
+            let mut out = Vec::new();
+            let err = rx
+                .decompress_message(payload, &mut out, 1 << 20)
+                .unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::UnexpectedEnd, "{payload:02x?}");
+            // Byte by byte, the same.
+            let mut rx = Decompressor::new(config).unwrap();
+            let mut out = Vec::new();
+            let mut result = Ok(0);
+            for (i, b) in payload.iter().enumerate() {
+                result = rx.decompress_fragment(&[*b], i + 1 == payload.len(), &mut out, 1 << 20);
+                if result.is_err() {
+                    break;
+                }
+            }
+            assert_eq!(result.unwrap_err().kind(), ErrorKind::UnexpectedEnd);
+            // After the refusal, the next good message decodes.
+            let mut tx = Compressor::new(config).unwrap();
+            let mut wire = Vec::new();
+            tx.compress_message(b"next message", &mut wire).unwrap();
+            let mut out = Vec::new();
+            rx.decompress_message(&wire, &mut out, 1 << 20).unwrap();
+            assert_eq!(out, b"next message");
+        }
+    }
+    // Every good message still ends on a block boundary: all levels and
+    // windows, payloads that end with a sync flush or with a final block.
+    for bits in [8u8, 9, 12, 15] {
+        for level in [0u8, 1, 6, 9] {
+            let config = MessageConfig::new()
+                .with_context_takeover(true)
+                .with_window_bits(bits)
+                .with_level(Level::new(level).unwrap());
+            let mut tx = Compressor::new(config).unwrap();
+            let mut rx = Decompressor::new(config).unwrap();
+            for n in [0usize, 1, 100, 70_000] {
+                let msg = b"block boundary ".repeat(n / 15 + 1)[..n].to_vec();
+                let mut wire = Vec::new();
+                tx.compress_message(&msg, &mut wire).unwrap();
+                let mut out = Vec::new();
+                rx.decompress_message(&wire, &mut out, 1 << 20).unwrap();
+                assert_eq!(out, msg, "bits {bits} level {level} n {n}");
+            }
+        }
+    }
+    let mut rx = Decompressor::new(MessageConfig::new()).unwrap();
+    let mut out = Vec::new();
+    rx.decompress_message(&[0xF3, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00], &mut out, 64)
+        .unwrap();
+    assert_eq!(out, b"Hello");
+    // A sender that leaves its 00 00 FF FF in place (RFC 7692 requires it
+    // removed) puts the appended tail mid-block: refused, since with
+    // takeover the next message would decode as garbage.
+    let unstripped = [
+        0xF2, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00, 0x00, 0x00, 0xFF, 0xFF,
+    ];
+    assert_eq!(
+        rx.decompress_message(&unstripped, &mut out, 64)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::UnexpectedEnd
+    );
 }
 
 /// T-13: bytes after the end are refused, not ignored, by default.

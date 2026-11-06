@@ -866,8 +866,10 @@ impl Encoder {
             if out.capacity() - have < room && out.try_reserve(room).is_err() {
                 return Err(Error::config(ErrorKind::AllocationFailed));
             }
-            let spare = out.capacity() - have;
-            out.resize(have + spare, 0);
+            // Zero-fill only this step's room, not all spare capacity: the
+            // spare grows with the output, so filling it on every call
+            // would make many small calls quadratic (T-5).
+            out.resize(have + room, 0);
             match self.compress(&input[consumed..], &mut out[have..], flush) {
                 Ok(p) => {
                     out.truncate(have + p.produced);
