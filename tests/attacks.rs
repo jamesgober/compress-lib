@@ -1,5 +1,5 @@
-//! One attack test per threat in `dev/PLAN.md` section 8 (T-1 to T-14).
-//! Each test is the attack; it passes when the defence holds.
+//! One attack test per threat in `dev/PLAN.md` section 8 (T-1 to T-15).
+//! Each test is the attack; it passes when the defence holds. T-15 (plaintext left in compression state) is `test_attack_wipe_leaves_no_plaintext`.
 
 use std::time::{Duration, Instant};
 
@@ -474,4 +474,39 @@ fn test_attack_t14_adversarial_encoder_input_bounded() {
         deflate::decompress_with(&out, Limits::unlimited()).unwrap(),
         data
     );
+}
+
+/// Compression history holds plaintext: `wipe` leaves none of it behind,
+/// and the engines work again afterwards.
+#[test]
+fn test_attack_wipe_leaves_no_plaintext() {
+    let secret = b"session=4f9a2c7e1b; password=correct horse battery staple";
+    let config = MessageConfig::new().with_context_takeover(true);
+    let mut tx = Compressor::new(config).unwrap();
+    let mut rx = Decompressor::new(config).unwrap();
+    let mut wire = Vec::new();
+    tx.compress_message(secret, &mut wire).unwrap();
+    let mut out = Vec::new();
+    rx.decompress_message(&wire, &mut out, 1 << 10).unwrap();
+    // After wipe the same message compresses exactly as it did the first
+    // time: nothing of the earlier history is left to refer to.
+    tx.wipe();
+    rx.wipe();
+    let mut again = Vec::new();
+    tx.compress_message(secret, &mut again).unwrap();
+    assert_eq!(
+        again, wire,
+        "wiped compressor still remembered the first message"
+    );
+    let mut out2 = Vec::new();
+    rx.decompress_message(&again, &mut out2, 1 << 10).unwrap();
+    assert_eq!(out2, secret);
+    let mut d = Deflater::new(Level::FAST);
+    let mut packed = Vec::new();
+    d.compress_vec(secret, &mut packed, Flush::Sync).unwrap();
+    d.wipe();
+    let mut i = Inflater::new();
+    i.decompress_vec(&packed, &mut Vec::new()).unwrap();
+    i.wipe();
+    assert_eq!((d.total_in(), i.total_out()), (0, 0));
 }

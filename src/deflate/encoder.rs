@@ -313,6 +313,24 @@ struct BlockScratch {
     pre_codes: [u16; 19],
 }
 
+impl BlockScratch {
+    fn new() -> Self {
+        Self {
+            lit_freq: [0; 286],
+            dist_freq: [0; 30],
+            lit_lens: [0; 286],
+            dist_lens: [0; 30],
+            lit_codes: [0; 288],
+            dist_codes: [0; 30],
+            rle: [(0, 0); 316],
+            rle_len: 0,
+            pre_freq: [0; 19],
+            pre_lens: [0; 19],
+            pre_codes: [0; 19],
+        }
+    }
+}
+
 /// A streaming raw DEFLATE encoder (RFC 1951).
 ///
 /// Push input, pull output, with a [`Flush`] choosing how far each call
@@ -452,19 +470,7 @@ impl Deflater {
             prev_match: 0,
             syms: Vec::with_capacity(sym_cap),
             sym_cap,
-            scratch: alloc::boxed::Box::new(BlockScratch {
-                lit_freq: [0; 286],
-                dist_freq: [0; 30],
-                lit_lens: [0; 286],
-                dist_lens: [0; 30],
-                lit_codes: [0; 288],
-                dist_codes: [0; 30],
-                rle: [(0, 0); 316],
-                rle_len: 0,
-                pre_freq: [0; 19],
-                pre_lens: [0; 19],
-                pre_codes: [0; 19],
-            }),
+            scratch: alloc::boxed::Box::new(BlockScratch::new()),
             // One block is at most about four bytes per symbol (fixed codes,
             // longest extra bits), or the stored form of its input.
             pending: Vec::with_capacity(sym_cap * 4 + wsize * span + 64),
@@ -685,6 +691,39 @@ impl Deflater {
         self.total_out = 0;
         self.flush_written = false;
         self.finished = false;
+    }
+
+    /// Zeroes the window (the plaintext history), the hash chains, the
+    /// symbol buffer, the pending output, and the block scratch, spare
+    /// capacity included, then resets the deflater for a new stream. For
+    /// connections that carried secrets: call it before the deflater is
+    /// dropped or reused. The allocations are kept.
+    ///
+    /// The zeroing goes through [`core::hint::black_box`] so it is not
+    /// removed as a dead store; without `unsafe` volatile writes that is a
+    /// strong hint to the compiler, not a guarantee.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::deflate::{Deflater, Flush};
+    ///
+    /// let mut d = Deflater::default();
+    /// d.compress_vec(b"password=hunter2", &mut Vec::new(), Flush::Sync)?;
+    /// d.wipe();
+    /// assert_eq!(d.total_in(), 0);
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    pub fn wipe(&mut self) {
+        crate::wipe_vec(&mut self.win);
+        crate::wipe_vec(&mut self.head);
+        crate::wipe_vec(&mut self.prev);
+        crate::wipe_vec(&mut self.syms);
+        crate::wipe_vec(&mut self.pending);
+        *self.scratch = BlockScratch::new();
+        core::hint::black_box(&*self.scratch);
+        self.bitbuf = 0;
+        self.reset();
     }
 
     /// Presets the history with `dictionary` (its last `2^window_bits`
@@ -1580,5 +1619,42 @@ fn rle_lengths(s: &mut BlockScratch, hlit: usize, hdist: usize) {
                 push(s, v, 0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deflater_wipe_zeroes_every_buffer() {
+        let mut d = Deflater::new(Level::DEFAULT);
+        let mut out = Vec::new();
+        d.compress_vec(&b"plaintext history ".repeat(500), &mut out, Flush::None)
+            .unwrap();
+        assert!(d.win.iter().any(|&b| b != 0));
+        d.wipe();
+        assert!(d.win.iter().all(|&b| b == 0));
+        assert!(d.head.iter().all(|&h| h == 0));
+        assert!(d.prev.iter().all(|&h| h == 0));
+        assert!(d.syms.is_empty() && d.pending.is_empty());
+        assert!(d.scratch.lit_freq.iter().all(|&f| f == 0));
+        assert_eq!((d.total_in, d.bitbuf), (0, 0));
+        let mut again = Vec::new();
+        d.compress_vec(b"after", &mut again, Flush::Finish).unwrap();
+        assert_eq!(crate::deflate::decompress(&again).unwrap(), b"after");
+    }
+
+    #[test]
+    fn test_wipe_vec_keeps_length_and_zeroes_contents() {
+        // Spare capacity cannot be read back without `unsafe`; the length
+        // and the visible elements can.
+        let mut v: Vec<u8> = Vec::with_capacity(64);
+        v.extend_from_slice(&[7; 40]);
+        v.truncate(10);
+        crate::wipe_vec(&mut v);
+        assert_eq!(v.len(), 10);
+        assert!(v.iter().all(|&b| b == 0));
+        assert!(v.capacity() >= 64);
     }
 }

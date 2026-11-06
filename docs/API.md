@@ -188,6 +188,7 @@ The streaming decoder (DF-10 to DF-19). Push input, pull output, caller-owned bu
 | `next_stream(&mut self) -> Result<(), Error>` | after `Done`, start a new stream keeping the window (`InvalidState` before `Done`) | 0.3 |
 | `set_dictionary(&mut self, &[u8]) -> Result<(), Error>` | preset history; only before any input | 0.3 |
 | `memory_in_use(&self) -> usize` | heap bytes held | 0.3 |
+| `wipe(&mut self)` | zero the window and decode tables (through `black_box`; no `unsafe`), then reset | 0.7 |
 
 ```rust
 use compress::deflate::{Inflater, Status};
@@ -224,6 +225,7 @@ The streaming encoder (DF-30 to DF-37).
 | `set_level(&mut self, Level)` | applies to data not yet compressed | 0.4 |
 | `level()`, `window_bits()` | | 0.4 |
 | `reset`, `set_dictionary`, `total_in`, `total_out`, `memory_in_use` | | 0.4 |
+| `wipe(&mut self)` | zero the window, hash chains, symbols, pending output, and scratch, spare capacity included, then reset | 0.7 |
 | `with_memory(self, MemoryConfig) -> Self`; `MemoryConfig::new()`, `with_hash_bits(u8)` (8 to 16), `with_block_symbols(usize)` (256 to 65,536), `hash_bits()`, `block_symbols()` (0 means chosen from the window bits) | hash table and symbol buffer sizes | 0.6 |
 | `MessageConfig::with_memory(MemoryConfig)`, `memory()` | the same for the per-message compressor | 0.6 |
 
@@ -251,6 +253,7 @@ RFC 7692 section 7.2 on top of raw DEFLATE (MSG-01 to MSG-07, 0.4).
 | `Decompressor::new(MessageConfig)`; `decompress_message(&mut self, payload: &[u8], out: &mut Vec<u8>, max: usize) -> Result<usize, Error>` | appends the tail, writes into `out` with `max` checked per chunk; accepts a final block (zero padding after it, as in RFC 7692 7.2.3.4, is allowed; other bytes are `TrailingData`) and starts the next message with the window kept (takeover) or cleared |
 | `decompress_fragment(&mut self, fragment, last: bool, out, max)` | the same for a message arriving in frames; every fragment appends to the same vector, which is the message's history (`InvalidState` if it changed) |
 | `reset()`, `memory_in_use()` | |
+| `wipe()` on both (0.7) | zero the history and buffers when a connection that carried secrets ends; without takeover an idle connection can drop its engines and build new ones later |
 
 ```rust
 use compress::message::{Compressor, Decompressor, MessageConfig};

@@ -31,6 +31,7 @@ Report a vulnerability privately through GitHub's security advisories for `james
 | T-12 | A truncated stream treated as complete (silent data loss) | `finish` and every one-shot function report `UnexpectedEnd` for an unfinished stream | none | `test_attack_t12_truncation_detected` |
 | T-13 | Data smuggled after the end of a stream | one-shot functions and the gzip decoder refuse trailing bytes (`TrailingData`); streaming decoders stop `consumed` at the stream's last byte; after a final block in a WebSocket message only zero padding is allowed | none | `test_attack_t13_trailing_data_refused` |
 | T-14 | Encoder input built to make the match finder work hardest | every level has a fixed chain limit (4,096 probes per position at level 9) | none | `test_attack_t14_adversarial_encoder_input_bounded` |
+| T-15 | Plaintext left behind in compression state (the window and buffers hold earlier messages) after a connection that carried secrets ends | `wipe()` on `Inflater`, `Deflater`, `message::Compressor`, and `message::Decompressor` zeroes the history, tables, and buffers, spare capacity included, through `core::hint::black_box`; without `unsafe` volatile writes this is a strong hint to the compiler, not a guarantee | one pass over the engine's memory (about 400 KiB for a level-6 deflater, 44 KiB for an inflater) | `test_attack_wipe_leaves_no_plaintext`, `test_deflater_wipe_zeroes_every_buffer`, `test_inflate_wipe_zeroes_window_and_tables` |
 
 ## Guidance
 
