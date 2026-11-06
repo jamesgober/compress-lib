@@ -20,6 +20,9 @@ const MIN_LOOKAHEAD: usize = MAX_MATCH + MIN_MATCH + 1;
 /// A match of length 3 further back than this costs more than three
 /// literals (zlib's TOO_FAR).
 const TOO_FAR: usize = 4096;
+/// Bytes past the window's logical end, so four-byte loads at any position
+/// of the window are in bounds.
+const WIN_PAD: usize = 8;
 /// Level 0 writes a stored block once this much input is waiting (or half
 /// the buffer, for small windows).
 const STORED_CHUNK: usize = 16 * 1024;
@@ -130,7 +133,7 @@ struct Params {
 
 const fn params(level: u8) -> Params {
     let (good, lazy, nice, chain, lazy_matching) = match level {
-        1 => (4, 4, 8, 4, false),
+        1 => (4, 4, 8, 1, false),
         2 => (4, 5, 16, 8, false),
         3 => (4, 6, 32, 32, false),
         4 => (4, 4, 16, 16, true),
@@ -165,6 +168,116 @@ pub enum Flush {
     Full,
     /// Write out everything and end the stream with a final block.
     Finish,
+}
+
+/// Memory settings for a [`Deflater`]: the hash table and the symbol
+/// buffer, the two largest parts after the window.
+///
+/// | Setting | Default | Memory | Effect |
+/// |---|---|---|---|
+/// | hash bits | window bits + 1, 9 to 15 (12 at most at level 1) | 2 bytes per entry | fewer bits: less memory, more collisions, slightly larger output |
+/// | block symbols | 2^(window bits + 1), 1,024 to 16,384 | 4 bytes per symbol, plus up to 4 bytes of pending output | fewer: less memory, more block headers |
+///
+/// # Examples
+///
+/// ```
+/// use compress_lib::deflate::MemoryConfig;
+///
+/// let config = MemoryConfig::new().with_hash_bits(11).with_block_symbols(4096);
+/// assert_eq!((config.hash_bits(), config.block_symbols()), (11, 4096));
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct MemoryConfig {
+    /// 0: chosen from the window bits.
+    hash_bits: u8,
+    /// 0: chosen from the window bits.
+    block_symbols: usize,
+}
+
+impl MemoryConfig {
+    /// Both sizes chosen from the window bits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(compress_lib::deflate::MemoryConfig::new().hash_bits(), 0);
+    /// ```
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            hash_bits: 0,
+            block_symbols: 0,
+        }
+    }
+
+    /// Sets the hash table to `2^bits` entries; clamped to 8 to 16 (0 keeps
+    /// the default).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(compress_lib::deflate::MemoryConfig::new().with_hash_bits(20).hash_bits(), 16);
+    /// ```
+    #[must_use]
+    pub const fn with_hash_bits(mut self, bits: u8) -> Self {
+        self.hash_bits = if bits == 0 {
+            0
+        } else if bits < 8 {
+            8
+        } else if bits > 16 {
+            16
+        } else {
+            bits
+        };
+        self
+    }
+
+    /// Sets the symbols per block; clamped to 256 to 65,536 (0 keeps the
+    /// default).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(compress_lib::deflate::MemoryConfig::new().with_block_symbols(100).block_symbols(), 256);
+    /// ```
+    #[must_use]
+    pub const fn with_block_symbols(mut self, symbols: usize) -> Self {
+        self.block_symbols = if symbols == 0 {
+            0
+        } else if symbols < 256 {
+            256
+        } else if symbols > 65_536 {
+            65_536
+        } else {
+            symbols
+        };
+        self
+    }
+
+    /// The hash bits set (0: chosen from the window bits).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(compress_lib::deflate::MemoryConfig::new().with_hash_bits(10).hash_bits(), 10);
+    /// ```
+    #[must_use]
+    pub const fn hash_bits(&self) -> u8 {
+        self.hash_bits
+    }
+
+    /// The symbols per block set (0: chosen from the window bits).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(compress_lib::deflate::MemoryConfig::new().block_symbols(), 0);
+    /// ```
+    #[must_use]
+    pub const fn block_symbols(&self) -> usize {
+        self.block_symbols
+    }
 }
 
 /// Scratch for building one block's codes (about 3 KiB, boxed once).
@@ -202,11 +315,15 @@ struct BlockScratch {
 /// # Ok::<(), compress_lib::Error>(())
 /// ```
 pub struct Deflater {
+    memory: MemoryConfig,
     level: u8,
     params: Params,
     window_bits: u8,
     /// Window buffer of `wsize * span` bytes; positions are indices into it.
     win: Vec<u8>,
+    /// Logical size of `win`; the vector has `WIN_PAD` more zero bytes so
+    /// four-byte loads near the end stay in bounds.
+    size: usize,
     wsize: usize,
     /// History always kept before `strstart`, and so the longest distance
     /// used: the whole window, or 262 bytes less when the buffer is only two
@@ -271,31 +388,43 @@ impl Deflater {
     /// ```
     #[must_use]
     pub fn new(level: Level) -> Self {
-        Self::build(level.get(), 15)
+        Self::build(level.get(), 15, MemoryConfig::new())
     }
 
-    fn build(level: u8, window_bits: u8) -> Self {
+    fn build(level: u8, window_bits: u8, memory: MemoryConfig) -> Self {
         let wsize = 1usize << window_bits;
         // At least 8 KiB of buffer, so small windows still read input in
         // useful pieces; always a whole number of windows (the hash chains
         // are indexed modulo the window).
         let span = (8192 / wsize).max(2);
-        let hash_bits = u32::from(window_bits + 1).clamp(9, 15);
-        let sym_cap = (1usize << (window_bits + 1)).clamp(1024, 16_384);
+        // Level 1 probes once, so a table that stays in the first-level cache
+        // is faster and loses little (D-040).
+        let max_hash = if level == 1 { 12 } else { 15 };
+        let hash_bits = match memory.hash_bits {
+            0 => u32::from(window_bits + 1).clamp(9, max_hash),
+            bits => u32::from(bits),
+        };
+        let sym_cap = match memory.block_symbols {
+            0 => (1usize << (window_bits + 1)).clamp(1024, 16_384),
+            n => n,
+        };
         Self {
+            memory,
             level,
             params: params(level),
             window_bits,
-            win: vec![0; wsize * span],
+            win: vec![0; wsize * span + WIN_PAD],
+            size: wsize * span,
             wsize,
             keep: if span >= 3 {
                 wsize
             } else {
                 wsize - MIN_LOOKAHEAD
             },
-            strstart: 0,
+            // Position 0 means "none" in the hash chains, so data starts at 1.
+            strstart: 1,
             lookahead: 0,
-            block_start: 0,
+            block_start: 1,
             hash_bits,
             head: vec![0; 1 << hash_bits],
             prev: vec![0; wsize],
@@ -354,7 +483,29 @@ impl Deflater {
         if !(8..=15).contains(&bits) {
             return Err(Error::config(ErrorKind::InvalidWindowBits));
         }
-        Ok(Self::build(self.level, bits))
+        Ok(Self::build(self.level, bits, self.memory))
+    }
+
+    /// Sizes the hash table and the symbol buffer explicitly (see
+    /// [`MemoryConfig`]), for many connections on little memory or for a
+    /// little more ratio.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::{Level, deflate::{self, Deflater, Flush, MemoryConfig}};
+    ///
+    /// let lean = MemoryConfig::new().with_hash_bits(10).with_block_symbols(2048);
+    /// let mut d = Deflater::new(Level::FAST).with_window_bits(9)?.with_memory(lean);
+    /// assert!(d.memory_in_use() < 48 * 1024);
+    /// let mut out = Vec::new();
+    /// d.compress_vec(b"small and lean", &mut out, Flush::Finish)?;
+    /// assert_eq!(deflate::decompress(&out)?, b"small and lean");
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    #[must_use]
+    pub fn with_memory(self, memory: MemoryConfig) -> Self {
+        Self::build(self.level, self.window_bits, memory)
     }
 
     /// The level in force.
@@ -490,10 +641,21 @@ impl Deflater {
     /// # Ok::<(), compress_lib::Error>(())
     /// ```
     pub fn reset(&mut self) {
-        self.strstart = 0;
+        // Clear only the hash heads this stream used when it was short and
+        // never slid (a small WebSocket message touches a few dozen of 32,768
+        // entries); otherwise clear them all.
+        let end = self.strstart + self.lookahead;
+        if self.total_in as usize + 1 < self.size && end < self.head.len() / 4 {
+            let shift = 32 - self.hash_bits;
+            for pos in 1..end.saturating_sub(MIN_MATCH - 1) {
+                self.head[hash3(load32(&self.win, pos), shift)] = 0;
+            }
+        } else {
+            self.head.fill(0);
+        }
+        self.strstart = 1;
         self.lookahead = 0;
-        self.block_start = 0;
-        self.head.fill(0);
+        self.block_start = 1;
         self.match_available = false;
         self.match_length = MIN_MATCH - 1;
         self.prev_length = MIN_MATCH - 1;
@@ -534,7 +696,7 @@ impl Deflater {
     /// # Ok::<(), compress_lib::Error>(())
     /// ```
     pub fn set_dictionary(&mut self, dictionary: &[u8]) -> Result<(), Error> {
-        if self.total_in != 0 || self.lookahead != 0 || self.strstart != 0 {
+        if self.total_in != 0 || self.lookahead != 0 || self.strstart != 1 {
             return Err(Error::config(ErrorKind::InvalidState));
         }
         let take = dictionary.len().min(self.wsize);
@@ -715,7 +877,7 @@ impl Deflater {
     /// Copies input into the window, sliding it first when the lookahead
     /// would not fit. Returns the bytes taken.
     fn fill_window(&mut self, input: &[u8]) -> usize {
-        let size = self.win.len();
+        let size = self.size;
         if size - self.strstart - self.lookahead < MIN_LOOKAHEAD
             && self.strstart >= self.keep + self.wsize
         {
@@ -756,90 +918,35 @@ impl Deflater {
         }
     }
 
-    #[inline]
-    fn hash(&self, pos: usize) -> usize {
-        let v = u32::from(self.win[pos])
-            | (u32::from(self.win[pos + 1]) << 8)
-            | (u32::from(self.win[pos + 2]) << 16);
-        (v.wrapping_mul(0x9E37_79B1) >> (32 - self.hash_bits)) as usize
-    }
-
     /// Inserts `pos` into the hash chains; returns the previous head (0 for
     /// none).
     #[inline]
     fn insert(&mut self, pos: usize) -> usize {
-        let h = self.hash(pos);
-        let head = self.head[h];
-        self.prev[pos & (self.wsize - 1)] = head;
-        self.head[h] = pos as u16;
-        head as usize
+        insert_at(
+            &mut self.head,
+            &mut self.prev,
+            &self.win,
+            pos,
+            32 - self.hash_bits,
+            self.wsize - 1,
+        )
     }
 
-    /// The longest match at `strstart` along the chain from `cur`, better
-    /// than `prev_length`; sets `match_start`.
-    fn longest_match(&mut self, mut cur: usize) -> usize {
-        let p = self.params;
-        let mut chain = p.chain;
-        if self.prev_length >= p.good {
-            chain >>= 2;
-        }
-        let max = MAX_MATCH.min(self.lookahead);
-        let nice = p.nice.min(max);
-        let keep = self.keep;
-        let mut best = self.prev_length;
-        let win = &self.win[..];
-        let s = self.strstart;
-        loop {
-            if cur == 0 || cur >= s || s - cur > keep || best >= max {
-                break;
-            }
-            if best < max
-                && win[cur + best] == win[s + best]
-                && win[cur] == win[s]
-                && win[cur + 1] == win[s + 1]
-            {
-                let len = common_prefix(win, cur, s, max);
-                if len > best {
-                    self.match_start = cur;
-                    best = len;
-                    if len >= nice {
-                        break;
-                    }
-                }
-            }
-            chain -= 1;
-            if chain == 0 {
-                break;
-            }
-            let next = self.prev[cur & (self.wsize - 1)] as usize;
-            if next >= cur {
-                break;
-            }
-            cur = next;
-        }
-        best.min(self.lookahead)
-    }
-
-    /// Records a literal. The caller ends the block when the symbol buffer
-    /// is full, once `strstart` covers the symbol's input.
+    /// Records a literal (set_level, flushes).
     fn literal(&mut self, b: u8) {
         self.syms.push(u32::from(b));
         self.scratch.lit_freq[b as usize] += 1;
     }
 
-    /// Records a match (see [`literal`](Self::literal)).
-    fn matched(&mut self, dist: usize, len: usize) {
-        self.syms
-            .push(((dist as u32) << 16) | (len - MIN_MATCH) as u32);
-        self.scratch.lit_freq[257 + LENGTH_CODE[len - MIN_MATCH] as usize] += 1;
-        self.scratch.dist_freq[dist_code(dist)] += 1;
-    }
-
-    /// Ends the block when the symbol buffer is full.
+    /// Ends the block when the symbol buffer is full. With a held-back
+    /// literal (lazy matching), the block stops before that byte.
     #[inline]
     fn block_full(&mut self) {
         if self.syms.len() >= self.sym_cap {
+            let held = usize::from(self.match_available);
+            self.strstart -= held;
             self.end_block(false);
+            self.strstart += held;
         }
     }
 
@@ -848,10 +955,10 @@ impl Deflater {
     /// match); with it, uses everything.
     fn process(&mut self, flushing: bool) {
         if self.level == 0 {
-            let chunk = STORED_CHUNK.min(self.win.len() / 2);
+            let chunk = STORED_CHUNK.min(self.size / 2);
             // A window too full to take more input and not yet able to slide
             // must be written out too, or the stream would stall.
-            let full = self.strstart + self.lookahead + MIN_LOOKAHEAD > self.win.len();
+            let full = self.strstart + self.lookahead + MIN_LOOKAHEAD > self.size;
             while self.lookahead >= chunk || ((flushing || full) && self.lookahead > 0) {
                 let n = self.lookahead.min(65_535);
                 self.strstart += n;
@@ -860,94 +967,15 @@ impl Deflater {
             }
             return;
         }
-        if self.params.lazy_matching {
-            self.process_lazy(flushing);
-        } else {
-            self.process_greedy(flushing);
-        }
-    }
-
-    fn process_greedy(&mut self, flushing: bool) {
         loop {
-            if self.lookahead < MIN_LOOKAHEAD && (!flushing || self.lookahead == 0) {
-                return;
-            }
-            let mut head = 0;
-            if self.lookahead >= MIN_MATCH {
-                head = self.insert(self.strstart);
-            }
-            self.match_length = MIN_MATCH - 1;
-            if head != 0 && self.strstart - head <= self.keep {
-                self.prev_length = MIN_MATCH - 1;
-                self.match_length = self.longest_match(head);
-            }
-            if self.match_length >= MIN_MATCH {
-                let len = self.match_length;
-                self.matched(self.strstart - self.match_start, len);
-                self.lookahead -= len;
-                if len <= self.params.lazy && self.lookahead >= MIN_MATCH {
-                    for _ in 1..len {
-                        self.strstart += 1;
-                        self.insert(self.strstart);
-                    }
-                    self.strstart += 1;
-                } else {
-                    self.strstart += len;
-                }
+            let used_up = if self.params.lazy_matching {
+                self.lazy_run(flushing)
             } else {
-                self.literal(self.win[self.strstart]);
-                self.lookahead -= 1;
-                self.strstart += 1;
-            }
+                self.greedy_run(flushing)
+            };
             self.block_full();
-        }
-    }
-
-    fn process_lazy(&mut self, flushing: bool) {
-        loop {
-            if self.lookahead < MIN_LOOKAHEAD && (!flushing || self.lookahead == 0) {
+            if used_up {
                 break;
-            }
-            let mut head = 0;
-            if self.lookahead >= MIN_MATCH {
-                head = self.insert(self.strstart);
-            }
-            self.prev_length = self.match_length;
-            self.prev_match = self.match_start;
-            self.match_length = MIN_MATCH - 1;
-            if head != 0 && self.prev_length < self.params.lazy && self.strstart - head <= self.keep
-            {
-                self.match_length = self.longest_match(head);
-                if self.match_length == MIN_MATCH && self.strstart - self.match_start > TOO_FAR {
-                    self.match_length = MIN_MATCH - 1;
-                }
-            }
-            if self.prev_length >= MIN_MATCH && self.match_length <= self.prev_length {
-                let max_insert = self.strstart + self.lookahead - MIN_MATCH;
-                let len = self.prev_length;
-                self.matched(self.strstart - 1 - self.prev_match, len);
-                self.lookahead -= len - 1;
-                for _ in 0..len - 2 {
-                    self.strstart += 1;
-                    if self.strstart <= max_insert {
-                        self.insert(self.strstart);
-                    }
-                }
-                self.match_available = false;
-                self.match_length = MIN_MATCH - 1;
-                self.strstart += 1;
-                self.block_full();
-            } else if self.match_available {
-                // The literal is the byte before `strstart`: end the block
-                // before moving on, so the block's input covers it exactly.
-                self.literal(self.win[self.strstart - 1]);
-                self.block_full();
-                self.strstart += 1;
-                self.lookahead -= 1;
-            } else {
-                self.match_available = true;
-                self.strstart += 1;
-                self.lookahead -= 1;
             }
         }
         if flushing && self.match_available {
@@ -955,6 +983,224 @@ impl Deflater {
             self.match_available = false;
             self.block_full();
         }
+    }
+
+    /// Greedy matching (levels 1 to 3) with the hot state in locals. Runs
+    /// until the lookahead is used up (`true`) or the symbol buffer is full
+    /// (`false`).
+    fn greedy_run(&mut self, flushing: bool) -> bool {
+        let p = self.params;
+        let wmask = self.wsize - 1;
+        let keep = self.keep;
+        let shift = 32 - self.hash_bits;
+        let cap = self.sym_cap;
+        let mut s = self.strstart;
+        let mut look = self.lookahead;
+        let mut misses = 0usize;
+        let skip = self.level == 1;
+        let win = &self.win[..];
+        let head = &mut self.head[..];
+        let prev = &mut self.prev[..];
+        let syms = &mut self.syms;
+        let freq = &mut *self.scratch;
+        let used_up = loop {
+            if look < MIN_LOOKAHEAD && (!flushing || look == 0) {
+                break true;
+            }
+            if syms.len() >= cap {
+                break false;
+            }
+            let mut len = 0;
+            let mut start = 0;
+            if look >= MIN_MATCH {
+                let s4 = load32(win, s);
+                let h = hash3(s4, shift);
+                let mut cur = usize::from(head[h]);
+                prev[s & wmask] = head[h];
+                head[h] = s as u16;
+                let max = MAX_MATCH.min(look);
+                let mut chain = p.chain;
+                while cur != 0 && cur < s && s - cur <= keep {
+                    if (load32(win, cur) ^ s4) & 0x00FF_FFFF == 0 {
+                        let l = MIN_MATCH
+                            + common_prefix(win, cur + MIN_MATCH, s + MIN_MATCH, max - MIN_MATCH);
+                        if l > len {
+                            len = l;
+                            start = cur;
+                            if l >= p.nice.min(max) {
+                                break;
+                            }
+                        }
+                    }
+                    chain -= 1;
+                    if chain == 0 {
+                        break;
+                    }
+                    let next = usize::from(prev[cur & wmask]);
+                    if next >= cur {
+                        break;
+                    }
+                    cur = next;
+                }
+            }
+            if len >= MIN_MATCH {
+                let dist = s - start;
+                syms.push(((dist as u32) << 16) | (len - MIN_MATCH) as u32);
+                freq.lit_freq[257 + LENGTH_CODE[len - MIN_MATCH] as usize] += 1;
+                freq.dist_freq[dist_code(dist)] += 1;
+                look -= len;
+                misses = 0;
+                if len <= p.lazy && look >= MIN_MATCH {
+                    for _ in 1..len {
+                        s += 1;
+                        insert_at(head, prev, win, s, shift, wmask);
+                    }
+                    s += 1;
+                } else {
+                    s += len;
+                }
+            } else {
+                let b = win[s];
+                syms.push(u32::from(b));
+                freq.lit_freq[b as usize] += 1;
+                look -= 1;
+                s += 1;
+                misses += 1;
+                // Level 1 on data that keeps missing (compressed or random
+                // input): search only every few positions, more sparsely
+                // the longer the run of misses (D-040).
+                if skip && misses > 64 {
+                    let extra = ((misses - 64) >> 4).min(15).min(look).min(cap - syms.len());
+                    for &b in &win[s..s + extra] {
+                        syms.push(u32::from(b));
+                        freq.lit_freq[b as usize] += 1;
+                    }
+                    s += extra;
+                    look -= extra;
+                }
+            }
+        };
+        self.strstart = s;
+        self.lookahead = look;
+        self.match_length = MIN_MATCH - 1;
+        used_up
+    }
+
+    /// Lazy matching (levels 4 to 9, zlib's deflate_slow) with the hot state
+    /// in locals; returns as [`greedy_run`](Self::greedy_run).
+    fn lazy_run(&mut self, flushing: bool) -> bool {
+        let p = self.params;
+        let wmask = self.wsize - 1;
+        let keep = self.keep;
+        let shift = 32 - self.hash_bits;
+        let cap = self.sym_cap;
+        let mut s = self.strstart;
+        let mut look = self.lookahead;
+        let mut available = self.match_available;
+        let mut match_length = self.match_length;
+        let mut match_start = self.match_start;
+        let mut prev_length;
+        let mut prev_match;
+        let win = &self.win[..];
+        let head = &mut self.head[..];
+        let prev = &mut self.prev[..];
+        let syms = &mut self.syms;
+        let freq = &mut *self.scratch;
+        let used_up = loop {
+            if look < MIN_LOOKAHEAD && (!flushing || look == 0) {
+                break true;
+            }
+            if syms.len() >= cap {
+                break false;
+            }
+            let mut cur = 0;
+            let mut s4 = 0;
+            if look >= MIN_MATCH {
+                s4 = load32(win, s);
+                let h = hash3(s4, shift);
+                cur = usize::from(head[h]);
+                prev[s & wmask] = head[h];
+                head[h] = s as u16;
+            }
+            prev_length = match_length;
+            prev_match = match_start;
+            match_length = MIN_MATCH - 1;
+            if cur != 0 && prev_length < p.lazy && cur < s && s - cur <= keep {
+                // Search for a match longer than the one held back.
+                let max = MAX_MATCH.min(look);
+                let nice = p.nice.min(max);
+                let mut chain = if prev_length >= p.good {
+                    p.chain >> 2
+                } else {
+                    p.chain
+                };
+                let mut best = prev_length;
+                while cur != 0 && cur < s && s - cur <= keep && best < max {
+                    // The two bytes ending a longer match first (zlib's scan
+                    // end), then the first three.
+                    if load16(win, cur + best - 1) == load16(win, s + best - 1)
+                        && (load32(win, cur) ^ s4) & 0x00FF_FFFF == 0
+                    {
+                        let l = MIN_MATCH
+                            + common_prefix(win, cur + MIN_MATCH, s + MIN_MATCH, max - MIN_MATCH);
+                        if l > best {
+                            best = l;
+                            match_start = cur;
+                            if l >= nice {
+                                break;
+                            }
+                        }
+                    }
+                    chain -= 1;
+                    if chain == 0 {
+                        break;
+                    }
+                    let next = usize::from(prev[cur & wmask]);
+                    if next >= cur {
+                        break;
+                    }
+                    cur = next;
+                }
+                match_length = best.min(look);
+                if match_length == MIN_MATCH && s - match_start > TOO_FAR {
+                    match_length = MIN_MATCH - 1;
+                }
+            }
+            if prev_length >= MIN_MATCH && match_length <= prev_length {
+                let max_insert = s + look - MIN_MATCH;
+                let dist = s - 1 - prev_match;
+                syms.push(((dist as u32) << 16) | (prev_length - MIN_MATCH) as u32);
+                freq.lit_freq[257 + LENGTH_CODE[prev_length - MIN_MATCH] as usize] += 1;
+                freq.dist_freq[dist_code(dist)] += 1;
+                look -= prev_length - 1;
+                for _ in 0..prev_length - 2 {
+                    s += 1;
+                    if s <= max_insert {
+                        insert_at(head, prev, win, s, shift, wmask);
+                    }
+                }
+                available = false;
+                match_length = MIN_MATCH - 1;
+                s += 1;
+            } else if available {
+                let b = win[s - 1];
+                syms.push(u32::from(b));
+                freq.lit_freq[b as usize] += 1;
+                s += 1;
+                look -= 1;
+            } else {
+                available = true;
+                s += 1;
+                look -= 1;
+            }
+        };
+        self.strstart = s;
+        self.lookahead = look;
+        self.match_available = available;
+        self.match_length = match_length;
+        self.match_start = match_start;
+        self.prev_length = match_length;
+        used_up
     }
 
     // ---- bit output ----------------------------------------------------
@@ -1167,36 +1413,84 @@ impl Deflater {
         dist_codes: &[u16],
         dist_lens: &[u8],
     ) {
-        let syms = core::mem::take(&mut self.syms);
-        for &sym in &syms {
+        // The bit buffer lives in locals for the whole block; each symbol's
+        // code and extra bits go out in one write (at most 20 bits for a
+        // length, 28 for a distance).
+        let mut bits = self.bitbuf;
+        let mut count = self.bitcnt;
+        let out = &mut self.pending;
+        let mut put = |value: u64, n: u32| {
+            bits |= value << count;
+            count += n;
+            if count >= 32 {
+                out.extend_from_slice(&(bits as u32).to_le_bytes());
+                bits >>= 32;
+                count -= 32;
+            }
+        };
+        for &sym in &self.syms {
             let dist = (sym >> 16) as usize;
             let litlen = (sym & 0xFFFF) as usize;
             if dist == 0 {
-                self.put(u32::from(lit_codes[litlen]), u32::from(lit_lens[litlen]));
+                put(u64::from(lit_codes[litlen]), u32::from(lit_lens[litlen]));
             } else {
                 let code = LENGTH_CODE[litlen] as usize;
-                self.put(
-                    u32::from(lit_codes[257 + code]),
-                    u32::from(lit_lens[257 + code]),
+                let len_bits = u32::from(lit_lens[257 + code]);
+                let extra = (litlen + MIN_MATCH - LENGTH_BASE[code] as usize) as u64;
+                put(
+                    u64::from(lit_codes[257 + code]) | (extra << len_bits),
+                    len_bits + u32::from(LENGTH_EXTRA[code]),
                 );
-                let extra = u32::from(LENGTH_EXTRA[code]);
-                if extra != 0 {
-                    self.put(
-                        (litlen + MIN_MATCH - LENGTH_BASE[code] as usize) as u32,
-                        extra,
-                    );
-                }
                 let d = dist_code(dist);
-                self.put(u32::from(dist_codes[d]), u32::from(dist_lens[d]));
-                let extra = u32::from(DIST_EXTRA[d]);
-                if extra != 0 {
-                    self.put((dist - DIST_BASE[d] as usize) as u32, extra);
-                }
+                let dist_bits = u32::from(dist_lens[d]);
+                let extra = (dist - DIST_BASE[d] as usize) as u64;
+                put(
+                    u64::from(dist_codes[d]) | (extra << dist_bits),
+                    dist_bits + u32::from(DIST_EXTRA[d]),
+                );
             }
         }
-        self.syms = syms;
-        self.put(u32::from(lit_codes[256]), u32::from(lit_lens[256]));
+        put(u64::from(lit_codes[256]), u32::from(lit_lens[256]));
+        self.bitbuf = bits;
+        self.bitcnt = count;
     }
+}
+
+/// Four bytes of `win` at `pos`, little-endian (the window is padded).
+#[inline(always)]
+fn load32(win: &[u8], pos: usize) -> u32 {
+    let mut b = [0u8; 4];
+    b.copy_from_slice(&win[pos..pos + 4]);
+    u32::from_le_bytes(b)
+}
+
+/// Two bytes of `win` at `pos`.
+#[inline(always)]
+fn load16(win: &[u8], pos: usize) -> u16 {
+    u16::from_le_bytes([win[pos], win[pos + 1]])
+}
+
+/// Hash of the low three bytes of `v` into `32 - shift` bits.
+#[inline(always)]
+fn hash3(v: u32, shift: u32) -> usize {
+    ((v & 0x00FF_FFFF).wrapping_mul(0x9E37_79B1) >> shift) as usize
+}
+
+/// Inserts `pos` into the chains; returns the previous head.
+#[inline(always)]
+fn insert_at(
+    head: &mut [u16],
+    prev: &mut [u16],
+    win: &[u8],
+    pos: usize,
+    shift: u32,
+    wmask: usize,
+) -> usize {
+    let h = hash3(load32(win, pos), shift);
+    let old = head[h];
+    prev[pos & wmask] = old;
+    head[h] = pos as u16;
+    usize::from(old)
 }
 
 /// Bytes in common at `a` and `b` (`a < b`), at most `max`.

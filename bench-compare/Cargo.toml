@@ -1,0 +1,39 @@
+# Competitor benchmarks for compress-lib. Not published, not part of the
+# crate's dependency graph (dev/PLAN.md, D-004 and D-012).
+[package]
+name = "compress-lib-bench-compare"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+compress-lib = { path = ".." }
+criterion = { version = "0.5", default-features = false }
+miniz_oxide = { version = "0.8", features = ["with-alloc"] }
+zlib-rs = { version = "0.6", default-features = false, features = ["rust-allocator"] }
+# flate2 picks one backend per build: run once per feature.
+flate2 = { version = "1", default-features = false, optional = true }
+
+[features]
+default = []
+flate2 = ["dep:flate2"]
+# flate2 over miniz_oxide (its default backend).
+flate2-miniz = ["flate2", "flate2/rust_backend"]
+# flate2 over zlib-rs.
+flate2-zlib-rs = ["flate2", "flate2/zlib-rs"]
+# flate2 over C zlib (needs a C compiler).
+flate2-zlib = ["flate2", "flate2/zlib"]
+# flate2 over zlib-ng (needs a C compiler and CMake).
+flate2-zlib-ng = ["flate2", "flate2/zlib-ng"]
+
+[[bench]]
+name = "compare"
+harness = false
+
+[profile.bench]
+lto = "fat"
+codegen-units = 1
+
+# Keeps this crate out of any parent workspace.
+[workspace]
+members = ["."]

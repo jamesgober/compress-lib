@@ -597,9 +597,13 @@ impl Inflater {
             let made = have - start;
             let cap_room = usize::try_from(self.limits.max_output().saturating_sub(self.total_out))
                 .unwrap_or(usize::MAX);
-            // Room offered per step: geometric (at least what this stream has
-            // produced) but at most 64 KiB ahead of it, and never past the cap.
-            let want = cap_room.min(VEC_CHUNK.max(made));
+            // Room offered per step: a first guess from the input (four times
+            // it, at most 64 KiB), then doubling what this stream has
+            // produced, never past the cap. Small messages stay small.
+            let guess = (input.len() - consumed)
+                .saturating_mul(4)
+                .clamp(256, VEC_CHUNK);
+            let want = cap_room.min(made.max(guess));
             if out.capacity() - have < want && out.try_reserve_exact(want).is_err() {
                 return Err(self.fail(ErrorKind::AllocationFailed, 0));
             }

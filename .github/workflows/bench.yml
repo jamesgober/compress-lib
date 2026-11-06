@@ -1,0 +1,55 @@
+name: Bench
+
+# Competitor benchmarks on hosted runners (bench-compare/). Run by pushing a
+# `bench/...` branch or by hand; the numbers go into docs/PERFORMANCE.md.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["bench/**"]
+
+env:
+  CARGO_TERM_COLOR: never
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  compare:
+    name: Compare (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # flate2 over C zlib where a C toolchain is at hand.
+          - os: ubuntu-latest
+            features: flate2-zlib
+          - os: macos-latest
+            features: flate2-zlib
+          - os: windows-latest
+            features: flate2-zlib-rs
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: CPU
+        shell: bash
+        run: |
+          (lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)") || sysctl -n machdep.cpu.brand_string 2>/dev/null || wmic cpu get name 2>/dev/null || true
+      - name: Benchmarks
+        shell: bash
+        working-directory: bench-compare
+        run: |
+          cargo bench --features ${{ matrix.features }} -- --warm-up-time 1 --measurement-time 3 2>&1 | tee bench.txt
+      - name: Summary
+        shell: bash
+        working-directory: bench-compare
+        run: |
+          {
+            echo "### ${{ matrix.os }} (flate2: ${{ matrix.features }})"
+            echo '```'
+            grep -E "^size" bench.txt
+            awk '/^(deflate|inflate|gzip|message)\//{n=$1} /thrpt:/{print n, $(NF-3), $(NF-2)}' bench.txt
+            echo '```'
+          } | tee summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.os }}
+          path: bench-compare/summary.txt

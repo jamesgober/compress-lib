@@ -19,7 +19,7 @@ pub(crate) mod huffman;
 
 use alloc::vec::Vec;
 
-pub use encoder::{Deflater, Flush};
+pub use encoder::{Deflater, Flush, MemoryConfig};
 
 pub use crate::inflate::Inflater;
 pub use crate::stream::{Progress, Status};
