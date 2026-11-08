@@ -4,7 +4,7 @@
 >
 > **Read order:** [`../REPS.md`](../REPS.md) &rarr; [`DIRECTIVES.md`](./DIRECTIVES.md) &rarr; **this file** &rarr; [`ROADMAP.md`](./ROADMAP.md).
 >
-> **Status:** `0.8.0` (2026-11-06): the alpha; the consumer paths exercised end to end and C zlib checked on both sides; the public API is written out in [`../docs/API.md`](../docs/API.md) with the version of each item (D-010). The beta series is `0.9.x`.
+> **Status:** `0.9.0` (2026-11-08): the beta; the API is the one 1.0 will freeze, and the 1.0 audit is in [`../docs/STABILITY-1.0.md`](../docs/STABILITY-1.0.md). 1.0 waits for James's go.
 
 ---
 
@@ -474,6 +474,38 @@ New defence idea per version is recorded in `dev/PLAN.md` (ideas section); the f
 - **Determinism**: digest of compressed corpus compared across CI OSes.
 - **Soak** (0.7): 4 h of random round trips with a memory check.
 
+### 10.1 Edge cases and their tests
+
+| Edge case | Test |
+|---|---|
+| E-1 | `test_inflate_empty_input_is_unexpected_end` |
+| E-2 | `test_roundtrip_empty_stream_is_03_00` |
+| E-3 | `test_inflate_one_byte_is_unexpected_end` |
+| E-4 | `test_inflate_stored_round_trip_and_sizes` |
+| E-5 | `test_inflate_match_lengths_3_and_258_and_distance_1` |
+| E-6 | `test_inflate_distance_32768_ok_and_one_past_history_rejected` |
+| E-7 | `test_inflate_window_bits_8_enforces_256` |
+| E-8 | `test_inflate_output_cap_exact_and_one_past` |
+| E-9 | `test_limits_ratio_below_floor_not_checked`, `test_inflate_ratio_cap_fires_after_floor` |
+| E-10 | `test_inflate_empty_fixed_block_decodes_to_nothing` |
+| E-11 | `test_inflate_dynamic_single_distance_code_allowed`, `test_inflate_dynamic_block_literals_only_without_distance_codes` |
+| E-12 | `test_inflate_dynamic_repeat_without_previous_rejected` |
+| E-13 | `test_inflate_dynamic_repeat_past_end_rejected` |
+| E-14 | `test_inflate_end_of_block_only_code_allowed` |
+| E-15 | `test_inflate_reserved_fixed_symbols_rejected` |
+| E-16 | `test_inflate_truncated_at_every_byte_is_unexpected_end`, `test_attack_t12_truncation_detected` |
+| E-17 | `test_inflate_trailing_bytes_rejected_and_consumed_exact` |
+| E-18, E-19 | `test_inflate_many_empty_stored_blocks_linear`, `test_attack_t6_empty_blocks_and_members_bounded` |
+| E-20 | `test_framing_gzip_header_fields_round_trip` |
+| E-21 | `test_framing_gzip_header_crc_checked` |
+| E-22, E-24 | `test_framing_gzip_checks_fail_closed` |
+| E-23 | `test_framing_gzip_members_and_cap` |
+| E-25 | `test_zlib_bad_headers_rejected`, `test_zlib_dictionary_required_and_wrong` |
+| E-26 | `test_inflate_next_stream_before_done_is_invalid_state` |
+| E-27 | `test_roundtrip_sync_flush_ends_with_marker_and_is_decodable` |
+| E-28 | `test_roundtrip_full_flush_cuts_history` |
+| E-29, E-30 | `test_message_empty_and_incompressible` |
+
 ---
 
 ## 11. Documentation deliverables
@@ -531,6 +563,7 @@ One new defence idea per version: hypothesis, method, expected cost.
 
 | Version | Idea | Method | Expected cost |
 |---|---|---|---|
+| 0.9 | An API frozen with a confusing name stays confusing for years; a name that reads like another type invites the wrong one in security-relevant code (a compressor where a decompressor was meant). The audit renames before the freeze and records every name decision. | `docs/STABILITY-1.0.md`, API rows; `io::EncodeReader` (D-051). | none |
 | 0.8 | Two libraries that each pass their own tests can still disagree on the wire. Checking every format both ways against C zlib itself (through CPython, which links it), not only against Rust ports of it, closes the gap between "matches zlib-rs" and "matches what most of the internet runs". | CI job `interop`: CPython writes streams at levels 0, 1, 6, 9 (raw, zlib, gzip, multi-member gzip) that compress-lib must decode, and decodes every stream compress-lib writes (with sync points). | none at run time (D-052) |
 | 0.7 | A defence that is only tested with the inputs its author imagined proves little; the attack tests are written as the attack (the bomb, the flood, the oracle), and each asserts the attack fails, not that a function returns an error. For the side channel (T-9) the test measures the oracle itself: the compressed size of an attacker's guess must not depend on an earlier secret. | `tests/attacks.rs`, one test per threat, named after it. | none at run time |
 | 0.6 | Speed work is where safety checks quietly disappear. Every 0.6 change kept `forbid(unsafe_code)` and the bounds checks, and the match decisions at levels 2 to 9 were required to stay those of 0.5, so a speed change could not hide a ratio change. | Compressed sizes at levels 2 to 9 were compared before and after each change; the full test and fuzz suites pass unchanged. | none at run time |
@@ -597,4 +630,6 @@ One new defence idea per version: hypothesis, method, expected cost.
 | D-049 | 2026-11-06 | A nightly fuzz workflow runs every target for ten minutes; 24-hour runs happen on a dedicated machine before each beta | catches regressions daily without hours of runner time per push |
 | D-050 | 2026-11-06 | The 0.8 exit item "ws-net permessage-deflate passes Autobahn 12 and 13" moves to ws-net, which builds it in its own repository against the published `message` API; compress-lib's alpha exit is the consumer paths exercised here (`tests/consumers.rs`). The 24-hour inflater fuzz run is required before 0.9 (the task's rule) rather than before 0.7 | a crate cannot land code in another repository's release; the run takes a calendar day and nothing in 0.7 or 0.8 depends on its end |
 | D-052 | 2026-11-06 | CI checks interoperation with C zlib through CPython's `zlib` and `gzip` modules in both directions | C zlib is the reference most peers run; CPython is on every runner and needs no C build step |
+| D-051 | 2026-11-08 | `io::Encoder` is renamed `io::EncodeReader` before the 1.0 freeze | it read like the format-generic `Encoder`; `EncodeReader` and `DecodeWriter` say which side reads and which writes |
+| D-053 | 2026-11-08 | The 24-hour fuzz run of the inflater targets is done: 24 hours of fuzzing per decoder target (`inflate_raw`, `inflate_split`) on the 0.9 decoder, 78,459,234 and 21,727,907 runs, with no findings | the task's rule before 0.9 (D-050); the run paused at WSL clock steps (libFuzzer reported timeouts of 2^64 - 1 seconds) and at one host restart, every input flagged at a pause replayed clean in under 5 seconds, and each target resumed for the rest of its own 24 hours |
 | D-054 | 2026-11-06 | Vector decoding sizes each call's first step from that call's input and doubles only within the call, growing the vector geometrically up to the cap (replaces D-044's doubling of the stream's output); a WebSocket message must sit on a block boundary after its tail; the soak and the 24-hour fuzz run restart on the fixed code | ws-net's review found both in 0.6.0: quadratic CPU from byte-by-byte fragments, and a cut-short block accepted at a message end that corrupted the next message with takeover; a long run on code that has since changed proves nothing about it |

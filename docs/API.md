@@ -9,7 +9,7 @@ Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.8" }
+compress = { package = "compress-lib", version = "0.9" }
 ```
 
 ## Contents
@@ -297,7 +297,7 @@ HTTP's `deflate` content coding is zlib framing (RFC 9110 section 8.4.1.2): use 
 
 ## `io` adapters
 
-Feature `std` (default), 0.5 (IO-01 to IO-03): `io::Reader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`), `io::Writer<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::Encoder<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
+Feature `std` (default), 0.5 (IO-01 to IO-03): `io::Reader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`), `io::Writer<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::EncodeReader<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
 
 ---
 

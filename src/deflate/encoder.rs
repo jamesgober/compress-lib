@@ -154,6 +154,23 @@ const fn params(level: u8) -> Params {
 }
 
 /// How far a call should go before returning.
+///
+/// # Examples
+///
+/// ```
+/// use compress_lib::deflate::{self, Deflater, Flush, Inflater, Status};
+///
+/// let mut d = Deflater::default();
+/// let mut wire = Vec::new();
+/// d.compress_vec(b"first ", &mut wire, Flush::Sync)?;   // decodable up to here
+/// let mut i = Inflater::new();
+/// let mut seen = Vec::new();
+/// assert_eq!(i.decompress_vec(&wire, &mut seen)?.status, Status::NeedsInput);
+/// assert_eq!(seen, b"first ");
+/// d.compress_vec(b"second", &mut wire, Flush::Finish)?;  // the end of the stream
+/// assert_eq!(deflate::decompress(&wire)?, b"first second");
+/// # Ok::<(), compress_lib::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Flush {

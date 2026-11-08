@@ -53,7 +53,7 @@ Exit: `bench-compare/` against miniz_oxide, zlib-rs, and flate2 backends on Linu
 ## v0.7.0 - Hardening (DONE, 2026-11-06)
 Exit: every fuzz target complete; 24 h fuzz run of the inflater targets without a finding; attack test per threat (`tests/attacks.rs`); 4 h soak flat; `docs/SECURITY.md`.
 - [x] Fuzz targets complete: `inflate_raw`, `inflate_split`, `roundtrip`, `message`, `framing`; smoke on every push, ten minutes per target nightly.
-- [ ] 24 h fuzz run of the inflater targets (moved to before 0.9, D-050): restarted on the fixed code (D-054), clean so far.
+- [x] 24 h fuzz run of the inflater targets (moved to before 0.9, D-050): restarted on the fixed code (D-054); done in 0.9 (D-053).
 - [x] Attack test per threat (`tests/attacks.rs`).
 - [x] 4 h soak on the fixed code: 446,443 random round trips through every format, level, window, and flush pattern, with the live heap flat at 21,318 bytes and a peak of 1,731,540 bytes.
 - [x] `docs/SECURITY.md`.
@@ -64,8 +64,12 @@ Exit: ws-net permessage-deflate on a branch passes Autobahn sections 12 and 13 s
 - [x] Interoperation with C zlib both ways in CI (CPython's `zlib` and `gzip`).
 - Moved out (D-050): permessage-deflate inside ws-net with Autobahn sections 12 and 13 is ws-net's own milestone, built in its repository against the published `message` API; this crate's side is the RFC 7692 codec and its tests here.
 
-## v0.9.x - Beta and polish
+## v0.9.x - Beta and polish (0.9.0 DONE, 2026-11-08)
 Exit: API audit (names, `#[must_use]`, `#[non_exhaustive]`, Tier 1 first), docs audit (every claim matches the build), `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, `docs/STABILITY-1.0.md` drafted, release candidates; nothing open except the 1.0 decision.
+- [x] API audit: `io::Encoder` renamed `io::EncodeReader` (D-051); `#[must_use]` on the `io` constructors; every public item documented with a runnable example.
+- [x] Docs audit: README, `docs/API.md`, and rustdoc checked against the build; `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, `docs/STABILITY-1.0.md`.
+- [x] 24 h inflater fuzz run (D-050): 24 hours of fuzzing per decoder target (`inflate_raw`, `inflate_split`) on the 0.9 decoder, 78,459,234 and 21,727,907 runs, with no findings.
+- [ ] Release candidates (`1.0.0-rc.N`) only after James's go for 1.0; nothing else is open.
 
 ## v1.0.0 - Stable
 Only on James's explicit go, after the audit is recorded in `docs/STABILITY-1.0.md`.
