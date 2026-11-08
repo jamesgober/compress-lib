@@ -9,7 +9,7 @@ Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.8" }
+compress = { package = "compress-lib", version = "0.9" }
 ```
 
 ## Contents

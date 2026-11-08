@@ -19,13 +19,13 @@ What 1.0 will promise, and the audit that must pass before it ships. 1.0 is rele
 | API | Every item in `docs/API.md` exists with the documented signature, and nothing public is undocumented | done (0.9): `docs/API.md` checked against the build item by item; `deny(missing_docs)` |
 | API | Names are plain words; Tier 1 needs no configuration; types that must not be ignored are `#[must_use]`; extensible enums and structs are `#[non_exhaustive]` | done (0.9): `io::Encoder` renamed `io::EncodeReader` (it read like the root `Encoder`, D-051); `#[must_use]` added to the `io` constructors |
 | API | Every engine is `Send` and `Sync` (compile-time test) | done (0.8) |
-| Docs | Every public item has rustdoc with a runnable example; README, `docs/API.md`, and the rustdoc match the build | done (0.9): every public item has a runnable example (checked by script and by 225 doc tests) |
+| Docs | Every public item has rustdoc with a runnable example; README, `docs/API.md`, and the rustdoc match the build | done (0.9): every public item has a runnable example (checked by script and by 229 doc tests) |
 | Docs | `ARCHITECTURE.md`, `PERFORMANCE.md`, `SECURITY.md`, `PLATFORM-NOTES.md`, this file | done (0.9) |
 | Tests | Unit tests for every `Ok` and `Err` path; property tests for every invariant; every edge case E-1 to E-30 | done (0.9): edge cases E-1 to E-30 mapped to tests in `dev/PLAN.md` section 10 |
 | Tests | Differential tests against zlib (zlib-rs) and miniz_oxide; interop with C zlib through CPython in CI | done (0.3 to 0.8) |
 | Security | An attack test per threat T-1 to T-14 (`tests/attacks.rs`) | done (0.7) |
-| Security | 24-hour fuzz run of the inflater targets with no finding | AUDIT_FUZZ |
-| Security | 4-hour soak with no heap growth | AUDIT_SOAK |
+| Security | 24-hour fuzz run of the inflater targets with no finding | done (0.9): 24 hours of fuzzing per decoder target (`inflate_raw`, `inflate_split`) on the 0.9 decoder, 78,459,234 and 21,727,907 runs, with no findings. |
+| Security | 4-hour soak with no heap growth | done (0.7): 4-hour soak on the 0.7 code, 446,443 random round trips with the live heap flat at 21,318 bytes and a peak of 1,731,540 bytes. |
 | Performance | Targets met or the gap published (`docs/PERFORMANCE.md`, D-045) | done (0.6), gap recorded |
 | Platforms | CI green on Linux, macOS, Windows (x86_64 and aarch64), stable and 1.85; cross checks; Miri on big-endian | done |
 | Consumers | ws-net, http-net, and serve-net paths exercised end to end (`tests/consumers.rs`) | done (0.8) |

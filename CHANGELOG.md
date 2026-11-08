@@ -13,6 +13,27 @@
 
 ---
 
+## [0.9.0] - 2026-11-08
+
+The beta: the 1.0 API audit and the documents that go with 1.0.
+
+### Changed
+
+- `io::Encoder` is now `io::EncodeReader`, the pair of `io::DecodeWriter`
+  (it read like the format-generic `Encoder`).
+- The `io` constructors and `Reader::into_inner` are `#[must_use]`.
+
+### Added
+
+- `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
+  `docs/STABILITY-1.0.md` (what 1.0 promises and the audit, item by item).
+- An example on `Flush`; the edge cases E-1 to E-30 mapped to their tests
+  in `dev/PLAN.md`.
+
+### Verified
+
+- 24 hours of fuzzing per decoder target (`inflate_raw`, `inflate_split`) on the 0.9 decoder, 78,459,234 and 21,727,907 runs, with no findings.
+
 ## [0.8.0] - 2026-11-06
 
 The alpha: the consumer paths end to end, and C zlib on both sides.
@@ -217,7 +238,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jamesgober/compress-lib/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/compress-lib/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/compress-lib/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/compress-lib/compare/v0.5.0...v0.6.0
