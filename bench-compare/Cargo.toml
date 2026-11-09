@@ -28,6 +28,15 @@ flate2-zlib = ["flate2", "flate2/zlib"]
 # flate2 over zlib-ng (needs a C compiler and CMake).
 flate2-zlib-ng = ["flate2", "flate2/zlib-ng"]
 
+# The corpora library and the `quick` tool are not benchmarks: keep them
+# out of `cargo bench`, which passes criterion's flags to every target.
+[lib]
+bench = false
+
+[[bin]]
+name = "quick"
+bench = false
+
 [[bench]]
 name = "compare"
 harness = false
