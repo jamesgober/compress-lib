@@ -44,7 +44,7 @@ Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.9" }
+compress = { package = "compress-lib", version = "1" }
 ```
 
 One call each way, capped at 64 MiB of output by default:

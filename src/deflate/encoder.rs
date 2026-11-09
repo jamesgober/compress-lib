@@ -1,11 +1,12 @@
 //! The raw DEFLATE (RFC 1951) encoder.
 //!
 //! Input is copied into a sliding window; a hash of three bytes indexes
-//! chains of earlier positions; greedy (levels 1 to 3) or lazy (4 to 9)
-//! matching turns the window into literal and match symbols; every 16,384
-//! symbols (fewer for small windows) a block is written as stored, fixed, or
-//! dynamic Huffman, whichever is smallest. Output waits in a pending buffer
-//! of at most one block until the caller drains it.
+//! chains of earlier positions (level 1 keeps only the newest position per
+//! hash); greedy (levels 1 to 3) or lazy (4 to 9) matching turns the window
+//! into literal and match symbols; level 0 cuts stored blocks of a fixed
+//! size. Every 16,384 symbols (fewer for small windows) a block is written
+//! as stored, fixed, or dynamic Huffman, whichever is smallest. Output waits
+//! in a pending buffer of at most one block until the caller drains it.
 
 use alloc::{vec, vec::Vec};
 
