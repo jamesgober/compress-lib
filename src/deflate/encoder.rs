@@ -1188,27 +1188,43 @@ impl Deflater {
                 head[h] = s as u16;
                 let max = MAX_MATCH.min(look);
                 let mut chain = p.chain;
-                while cur != 0 && cur < s && s - cur <= keep {
-                    if (load32(win, cur) ^ s4) & 0x00FF_FFFF == 0 {
-                        let l = MIN_MATCH
-                            + common_prefix(win, cur + MIN_MATCH, s + MIN_MATCH, max - MIN_MATCH);
-                        if l > len {
-                            len = l;
-                            start = cur;
-                            if l >= p.nice.min(max) {
-                                break;
+                if cur != 0 && cur < s && s - cur <= keep {
+                    let low = s.saturating_sub(keep).max(1);
+                    // As in lazy_run: the four bytes ending a longer match
+                    // first, once there is a match to beat (D-058).
+                    let mut end = 0;
+                    let mut s_end = 0;
+                    loop {
+                        if (len < MIN_MATCH || load32(win, cur + end) == s_end)
+                            && (load32(win, cur) ^ s4) & 0x00FF_FFFF == 0
+                        {
+                            let l = MIN_MATCH
+                                + common_prefix(
+                                    win,
+                                    cur + MIN_MATCH,
+                                    s + MIN_MATCH,
+                                    max - MIN_MATCH,
+                                );
+                            if l > len {
+                                len = l;
+                                start = cur;
+                                if l >= p.nice.min(max) {
+                                    break;
+                                }
+                                end = len - MIN_MATCH;
+                                s_end = load32(win, s + end);
                             }
                         }
+                        chain -= 1;
+                        if chain == 0 {
+                            break;
+                        }
+                        let next = usize::from(prev[cur & wmask]);
+                        if next >= cur || next < low {
+                            break;
+                        }
+                        cur = next;
                     }
-                    chain -= 1;
-                    if chain == 0 {
-                        break;
-                    }
-                    let next = usize::from(prev[cur & wmask]);
-                    if next >= cur {
-                        break;
-                    }
-                    cur = next;
                 }
             }
             if skip && len == MIN_MATCH && s - start > FAR3 {
@@ -1316,10 +1332,15 @@ impl Deflater {
                     p.chain
                 };
                 let mut best = prev_length;
-                while cur != 0 && cur < s && s - cur <= keep && best < max {
-                    // The two bytes ending a longer match first (zlib's scan
-                    // end), then the first three.
-                    if load16(win, cur + best - 1) == load16(win, s + best - 1)
+                // Candidates at or above `low` are inside the window.
+                let low = s.saturating_sub(keep).max(1);
+                // The four bytes ending a longer match, checked first (zlib's
+                // scan end, two bytes wider): a candidate that differs there
+                // cannot beat `best` (D-058).
+                let mut end = best.max(MIN_MATCH) - MIN_MATCH;
+                let mut s_end = load32(win, s + end);
+                while best < max {
+                    if (best < MIN_MATCH || load32(win, cur + end) == s_end)
                         && (load32(win, cur) ^ s4) & 0x00FF_FFFF == 0
                     {
                         let l = MIN_MATCH
@@ -1330,6 +1351,8 @@ impl Deflater {
                             if l >= nice {
                                 break;
                             }
+                            end = best - MIN_MATCH;
+                            s_end = load32(win, s + end);
                         }
                     }
                     chain -= 1;
@@ -1337,7 +1360,7 @@ impl Deflater {
                         break;
                     }
                     let next = usize::from(prev[cur & wmask]);
-                    if next >= cur {
+                    if next >= cur || next < low {
                         break;
                     }
                     cur = next;
@@ -1675,12 +1698,6 @@ fn load32(win: &[u8], pos: usize) -> u32 {
     let mut b = [0u8; 4];
     b.copy_from_slice(&win[pos..pos + 4]);
     u32::from_le_bytes(b)
-}
-
-/// Two bytes of `win` at `pos`.
-#[inline(always)]
-fn load16(win: &[u8], pos: usize) -> u16 {
-    u16::from_le_bytes([win[pos], win[pos + 1]])
 }
 
 /// Hash of the low three bytes of `v` into `32 - shift` bits.
