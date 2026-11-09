@@ -162,7 +162,7 @@ Stateless row of standard 2.16: a codec. Deterministic, no process-local assumpt
 | `message.rs` | public | RFC 7692 `Compressor`, `Decompressor`, `MessageConfig` |
 | `zlib.rs`, `gzip.rs` | public | framing engines, Tier 1 functions, `GzipHeader` |
 | `format.rs` | public | `Format`, `Decoder`, `Encoder` (format-generic engines) |
-| `io.rs` | public, feature `std` | `Reader`, `Writer` adapters |
+| `io.rs` | public, feature `std` | `DecodeReader`, `EncodeWriter`, `EncodeReader`, `DecodeWriter` adapters (D-060) |
 
 ### 5.2 Inflater
 

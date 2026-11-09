@@ -44,8 +44,10 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
 
 /// Compresses `data` into a complete raw DEFLATE stream at `level`.
 ///
-/// Allocation failure aborts, as for any `Vec`; use [`Deflater`] with a
-/// caller-owned buffer to control memory.
+/// Allocation failure aborts, as for any `Vec`, rather than return a
+/// truncated stream; [`Deflater::compress_vec`] reports it as
+/// `AllocationFailed`, and [`Deflater::compress`] writes into a caller-owned
+/// buffer.
 ///
 /// # Examples
 ///
@@ -63,9 +65,8 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
 pub fn compress_with(data: &[u8], level: Level) -> Vec<u8> {
     let mut deflater = Deflater::new(level);
     let mut out = Vec::with_capacity(data.len() / 2 + 64);
-    // `compress_vec` fails only when the vector cannot grow; a `Vec` that
-    // cannot grow is an abort anyway, so the output so far is returned.
-    let _ = deflater.compress_vec(data, &mut out, Flush::Finish);
+    let result = deflater.compress_vec(data, &mut out, Flush::Finish);
+    crate::one_shot_or_abort(result, &out);
     out
 }
 

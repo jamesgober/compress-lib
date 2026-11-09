@@ -12,7 +12,7 @@ use std::{
 
 use compress_lib::{
     Format, Level, Limits,
-    io::{Reader, Writer},
+    io::{DecodeReader, EncodeWriter},
 };
 
 fn main() -> io::Result<()> {
@@ -25,13 +25,14 @@ fn main() -> io::Result<()> {
     let output = BufWriter::new(File::create(to)?);
     match mode.as_str() {
         "compress" => {
-            let mut writer = Writer::new(output, Format::Gzip, Level::DEFAULT);
+            let mut writer = EncodeWriter::new(output, Format::Gzip, Level::DEFAULT);
             io::copy(&mut { input }, &mut writer)?;
             writer.finish()?;
         }
         "decompress" => {
             // Your own files: lift the default 64 MiB output cap.
-            let mut reader = Reader::new(input, Format::Gzip).with_limits(Limits::unlimited());
+            let mut reader =
+                DecodeReader::new(input, Format::Gzip).with_limits(Limits::unlimited());
             io::copy(&mut reader, &mut { output })?;
         }
         _ => {

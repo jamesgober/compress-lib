@@ -90,7 +90,7 @@ match p.status {
 }
 ```
 
-And `std::io`: `compress::io::Reader`, `Writer`, `EncodeReader`, `DecodeWriter`.
+And `std::io`: `compress::io::DecodeReader`, `EncodeWriter`, `EncodeReader`, `DecodeWriter`.
 
 The complete planned API, with the version each item arrives in, is in [`docs/API.md`](./docs/API.md).
 

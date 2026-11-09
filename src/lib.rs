@@ -127,11 +127,25 @@ mod level;
 mod limits;
 mod stream;
 
+pub use deflate::Flush;
 pub use error::{Error, ErrorKind};
 pub use format::{Decoder, Encoder, Format, decompress, decompress_with};
 pub use level::Level;
 pub use limits::Limits;
 pub use stream::{Progress, Status};
+
+/// Ends a one-shot compression. The encoders fail only when the output
+/// vector cannot grow, and a one-shot call has no error to return, so that
+/// aborts as growing a `Vec` does rather than hand back a truncated stream
+/// (D-059).
+pub(crate) fn one_shot_or_abort(result: Result<Progress, Error>, out: &alloc::vec::Vec<u8>) {
+    if result.is_err() {
+        let wanted = out.capacity().saturating_mul(2).max(1);
+        let layout =
+            core::alloc::Layout::array::<u8>(wanted).unwrap_or(core::alloc::Layout::new::<u8>());
+        alloc::alloc::handle_alloc_error(layout);
+    }
+}
 
 /// Overwrites every element of `v` with the default value, spare capacity
 /// included, keeping its length, and passes it through
