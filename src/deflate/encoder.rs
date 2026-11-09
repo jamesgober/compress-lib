@@ -20,6 +20,9 @@ const MIN_LOOKAHEAD: usize = MAX_MATCH + MIN_MATCH + 1;
 /// A match of length 3 further back than this costs more than three
 /// literals (zlib's TOO_FAR).
 const TOO_FAR: usize = 4096;
+/// Level 1: a match of length 3 further back than this is written as
+/// literals.
+const FAR3: usize = 8192;
 /// Bytes past the window's logical end, so four-byte loads at any position
 /// of the window are in bounds.
 const WIN_PAD: usize = 8;
@@ -376,9 +379,14 @@ pub struct Deflater {
     match_start: usize,
     prev_length: usize,
     prev_match: usize,
-    /// Symbols of the current block: `dist << 16 | litlen`, where a literal
-    /// has `dist == 0` and a match stores `length - 3`.
+    /// Level 1: positions in a row without a match. Kept across calls so the
+    /// output does not depend on how the input was split.
+    misses: usize,
+    /// Symbols of the current block, `syms[..nsyms]`: `dist << 16 | litlen`,
+    /// where a literal has `dist == 0` and a match stores `length - 3`. The
+    /// vector is `sym_cap` long, so symbols are stored by index.
     syms: Vec<u32>,
+    nsyms: usize,
     sym_cap: usize,
     scratch: alloc::boxed::Box<BlockScratch>,
     pending: Vec<u8>,
@@ -468,7 +476,9 @@ impl Deflater {
             match_start: 0,
             prev_length: MIN_MATCH - 1,
             prev_match: 0,
-            syms: Vec::with_capacity(sym_cap),
+            misses: 0,
+            syms: vec![0; sym_cap],
+            nsyms: 0,
             sym_cap,
             scratch: alloc::boxed::Box::new(BlockScratch::new()),
             // One block is at most about four bytes per symbol (fixed codes,
@@ -587,6 +597,11 @@ impl Deflater {
             self.match_available = false;
             self.block_full();
         }
+        if self.params.chain == 1 && next.chain > 1 {
+            // Level 1 left the chains stale (D-055); empty chains are only
+            // shorter.
+            self.prev.fill(0);
+        }
         // No pending match crosses the change.
         self.match_length = MIN_MATCH - 1;
         self.prev_length = MIN_MATCH - 1;
@@ -682,7 +697,8 @@ impl Deflater {
         self.match_available = false;
         self.match_length = MIN_MATCH - 1;
         self.prev_length = MIN_MATCH - 1;
-        self.syms.clear();
+        self.misses = 0;
+        self.nsyms = 0;
         self.pending.clear();
         self.pending_pos = 0;
         self.bitbuf = 0;
@@ -992,7 +1008,8 @@ impl Deflater {
 
     /// Records a literal (set_level, flushes).
     fn literal(&mut self, b: u8) {
-        self.syms.push(u32::from(b));
+        self.syms[self.nsyms] = u32::from(b);
+        self.nsyms += 1;
         self.scratch.lit_freq[b as usize] += 1;
     }
 
@@ -1000,7 +1017,7 @@ impl Deflater {
     /// literal (lazy matching), the block stops before that byte.
     #[inline]
     fn block_full(&mut self) {
-        if self.syms.len() >= self.sym_cap {
+        if self.nsyms >= self.sym_cap {
             let held = usize::from(self.match_available);
             self.strstart -= held;
             self.end_block(false);
@@ -1013,14 +1030,21 @@ impl Deflater {
     /// match); with it, uses everything.
     fn process(&mut self, flushing: bool) {
         if self.level == 0 {
+            // Blocks of exactly `chunk` bytes, so the cuts do not depend on
+            // how the input arrived (D-057). A shorter block is cut only at a
+            // flush, or when the window is completely full and cannot slide
+            // yet: the same point however the input was split.
             let chunk = STORED_CHUNK.min(self.size / 2);
-            // A window too full to take more input and not yet able to slide
-            // must be written out too, or the stream would stall.
-            let full = self.strstart + self.lookahead + MIN_LOOKAHEAD > self.size;
-            while self.lookahead >= chunk || ((flushing || full) && self.lookahead > 0) {
-                let n = self.lookahead.min(65_535);
-                self.strstart += n;
-                self.lookahead -= n;
+            while self.lookahead >= chunk {
+                self.strstart += chunk;
+                self.lookahead -= chunk;
+                self.end_block(false);
+            }
+            let full = self.strstart + self.lookahead == self.size
+                && self.strstart < self.keep + self.wsize;
+            if (flushing || full) && self.lookahead > 0 {
+                self.strstart += self.lookahead;
+                self.lookahead = 0;
                 self.end_block(false);
             }
             return;
@@ -1043,10 +1067,90 @@ impl Deflater {
         }
     }
 
+    /// Level 1 while a whole match always fits in the lookahead: one probe
+    /// per position and no chain, so no lookahead or chain checks inside the
+    /// loop (D-055). Makes the same choices as [`greedy_run`](Self::greedy_run),
+    /// which finishes what is left.
+    fn fast_run(&mut self) {
+        let lazy = self.params.lazy;
+        let keep = self.keep;
+        let shift = 32 - self.hash_bits;
+        let cap = self.sym_cap;
+        let mut s = self.strstart;
+        let mut look = self.lookahead;
+        let mut n = self.nsyms;
+        let mut misses = self.misses;
+        let win = &self.win[..];
+        let head = &mut self.head[..];
+        let syms = &mut self.syms[..];
+        let freq = &mut *self.scratch;
+        while look >= MIN_LOOKAHEAD && n < cap {
+            let s4 = load32(win, s);
+            let h = hash3(s4, shift);
+            let cur = usize::from(head[h]);
+            head[h] = s as u16;
+            let mut len = 0;
+            if cur != 0 && cur < s && s - cur <= keep && (load32(win, cur) ^ s4) & 0x00FF_FFFF == 0
+            {
+                len = MIN_MATCH
+                    + common_prefix(win, cur + MIN_MATCH, s + MIN_MATCH, MAX_MATCH - MIN_MATCH);
+                if len == MIN_MATCH && s - cur > FAR3 {
+                    len = 0;
+                }
+            }
+            if len >= MIN_MATCH {
+                let dist = s - cur;
+                syms[n] = ((dist as u32) << 16) | (len - MIN_MATCH) as u32;
+                n += 1;
+                freq.lit_freq[257 + LENGTH_CODE[len - MIN_MATCH] as usize] += 1;
+                freq.dist_freq[dist_code(dist)] += 1;
+                // At least MIN_LOOKAHEAD - MAX_MATCH bytes are left, enough to
+                // hash every position inside a short match.
+                look -= len;
+                misses = 0;
+                if len <= lazy {
+                    for _ in 1..len {
+                        s += 1;
+                        head[hash3(load32(win, s), shift)] = s as u16;
+                    }
+                    s += 1;
+                } else {
+                    s += len;
+                }
+            } else {
+                let b = win[s];
+                syms[n] = u32::from(b);
+                n += 1;
+                freq.lit_freq[b as usize] += 1;
+                look -= 1;
+                s += 1;
+                misses += 1;
+                if misses > 64 {
+                    // As in greedy_run (D-040).
+                    let extra = ((misses - 64) >> 4).min(15).min(look).min(cap - n);
+                    for &b in &win[s..s + extra] {
+                        syms[n] = u32::from(b);
+                        n += 1;
+                        freq.lit_freq[b as usize] += 1;
+                    }
+                    s += extra;
+                    look -= extra;
+                }
+            }
+        }
+        self.strstart = s;
+        self.lookahead = look;
+        self.nsyms = n;
+        self.misses = misses;
+    }
+
     /// Greedy matching (levels 1 to 3) with the hot state in locals. Runs
     /// until the lookahead is used up (`true`) or the symbol buffer is full
     /// (`false`).
     fn greedy_run(&mut self, flushing: bool) -> bool {
+        if self.level == 1 {
+            self.fast_run();
+        }
         let p = self.params;
         let wmask = self.wsize - 1;
         let keep = self.keep;
@@ -1054,18 +1158,22 @@ impl Deflater {
         let cap = self.sym_cap;
         let mut s = self.strstart;
         let mut look = self.lookahead;
-        let mut misses = 0usize;
+        let mut misses = self.misses;
         let skip = self.level == 1;
+        // One probe per position never follows a chain, so level 1 keeps
+        // only the heads (D-055).
+        let chained = p.chain > 1;
         let win = &self.win[..];
         let head = &mut self.head[..];
         let prev = &mut self.prev[..];
-        let syms = &mut self.syms;
+        let syms = &mut self.syms[..];
+        let mut n = self.nsyms;
         let freq = &mut *self.scratch;
         let used_up = loop {
             if look < MIN_LOOKAHEAD && (!flushing || look == 0) {
                 break true;
             }
-            if syms.len() >= cap {
+            if n >= cap {
                 break false;
             }
             let mut len = 0;
@@ -1074,7 +1182,9 @@ impl Deflater {
                 let s4 = load32(win, s);
                 let h = hash3(s4, shift);
                 let mut cur = usize::from(head[h]);
-                prev[s & wmask] = head[h];
+                if chained {
+                    prev[s & wmask] = head[h];
+                }
                 head[h] = s as u16;
                 let max = MAX_MATCH.min(look);
                 let mut chain = p.chain;
@@ -1101,9 +1211,13 @@ impl Deflater {
                     cur = next;
                 }
             }
+            if skip && len == MIN_MATCH && s - start > FAR3 {
+                len = 0;
+            }
             if len >= MIN_MATCH {
                 let dist = s - start;
-                syms.push(((dist as u32) << 16) | (len - MIN_MATCH) as u32);
+                syms[n] = ((dist as u32) << 16) | (len - MIN_MATCH) as u32;
+                n += 1;
                 freq.lit_freq[257 + LENGTH_CODE[len - MIN_MATCH] as usize] += 1;
                 freq.dist_freq[dist_code(dist)] += 1;
                 look -= len;
@@ -1111,7 +1225,11 @@ impl Deflater {
                 if len <= p.lazy && look >= MIN_MATCH {
                     for _ in 1..len {
                         s += 1;
-                        insert_at(head, prev, win, s, shift, wmask);
+                        if chained {
+                            insert_at(head, prev, win, s, shift, wmask);
+                        } else {
+                            head[hash3(load32(win, s), shift)] = s as u16;
+                        }
                     }
                     s += 1;
                 } else {
@@ -1119,7 +1237,8 @@ impl Deflater {
                 }
             } else {
                 let b = win[s];
-                syms.push(u32::from(b));
+                syms[n] = u32::from(b);
+                n += 1;
                 freq.lit_freq[b as usize] += 1;
                 look -= 1;
                 s += 1;
@@ -1128,9 +1247,10 @@ impl Deflater {
                 // input): search only every few positions, more sparsely
                 // the longer the run of misses (D-040).
                 if skip && misses > 64 {
-                    let extra = ((misses - 64) >> 4).min(15).min(look).min(cap - syms.len());
+                    let extra = ((misses - 64) >> 4).min(15).min(look).min(cap - n);
                     for &b in &win[s..s + extra] {
-                        syms.push(u32::from(b));
+                        syms[n] = u32::from(b);
+                        n += 1;
                         freq.lit_freq[b as usize] += 1;
                     }
                     s += extra;
@@ -1140,6 +1260,8 @@ impl Deflater {
         };
         self.strstart = s;
         self.lookahead = look;
+        self.nsyms = n;
+        self.misses = misses;
         self.match_length = MIN_MATCH - 1;
         used_up
     }
@@ -1162,13 +1284,14 @@ impl Deflater {
         let win = &self.win[..];
         let head = &mut self.head[..];
         let prev = &mut self.prev[..];
-        let syms = &mut self.syms;
+        let syms = &mut self.syms[..];
+        let mut n = self.nsyms;
         let freq = &mut *self.scratch;
         let used_up = loop {
             if look < MIN_LOOKAHEAD && (!flushing || look == 0) {
                 break true;
             }
-            if syms.len() >= cap {
+            if n >= cap {
                 break false;
             }
             let mut cur = 0;
@@ -1227,7 +1350,8 @@ impl Deflater {
             if prev_length >= MIN_MATCH && match_length <= prev_length {
                 let max_insert = s + look - MIN_MATCH;
                 let dist = s - 1 - prev_match;
-                syms.push(((dist as u32) << 16) | (prev_length - MIN_MATCH) as u32);
+                syms[n] = ((dist as u32) << 16) | (prev_length - MIN_MATCH) as u32;
+                n += 1;
                 freq.lit_freq[257 + LENGTH_CODE[prev_length - MIN_MATCH] as usize] += 1;
                 freq.dist_freq[dist_code(dist)] += 1;
                 look -= prev_length - 1;
@@ -1242,7 +1366,8 @@ impl Deflater {
                 s += 1;
             } else if available {
                 let b = win[s - 1];
-                syms.push(u32::from(b));
+                syms[n] = u32::from(b);
+                n += 1;
                 freq.lit_freq[b as usize] += 1;
                 s += 1;
                 look -= 1;
@@ -1254,6 +1379,7 @@ impl Deflater {
         };
         self.strstart = s;
         self.lookahead = look;
+        self.nsyms = n;
         self.match_available = available;
         self.match_length = match_length;
         self.match_start = match_start;
@@ -1311,7 +1437,7 @@ impl Deflater {
     /// the cheapest of stored, fixed, and dynamic.
     fn end_block(&mut self, last: bool) {
         let stored_len = (self.strstart as isize - self.block_start).max(0) as usize;
-        if self.syms.is_empty() && stored_len == 0 && !last {
+        if self.nsyms == 0 && stored_len == 0 && !last {
             return;
         }
         let stored_ok = self.block_start >= 0;
@@ -1320,7 +1446,7 @@ impl Deflater {
         } else {
             self.write_huffman_or_stored(stored_ok, stored_len, last);
         }
-        self.syms.clear();
+        self.nsyms = 0;
         self.scratch.lit_freq.fill(0);
         self.scratch.dist_freq.fill(0);
         self.block_start = self.strstart as isize;
@@ -1471,44 +1597,73 @@ impl Deflater {
         dist_codes: &[u16],
         dist_lens: &[u8],
     ) {
-        // The bit buffer lives in locals for the whole block; each symbol's
-        // code and extra bits go out in one write (at most 20 bits for a
-        // length, 28 for a distance).
+        // The bit buffer lives in locals for the whole block. A symbol is at
+        // most 48 bits (a 15-bit length code with 5 extra bits, a 15-bit
+        // distance code with 13), so with at most 7 bits left over it always
+        // fits in 64: each symbol is one eight-byte store into room sized
+        // for the whole block, then the whole bytes are kept (D-056).
         let mut bits = self.bitbuf;
         let mut count = self.bitcnt;
         let out = &mut self.pending;
-        let mut put = |value: u64, n: u32| {
-            bits |= value << count;
-            count += n;
-            if count >= 32 {
-                out.extend_from_slice(&(bits as u32).to_le_bytes());
-                bits >>= 32;
-                count -= 32;
-            }
+        let mut at = out.len();
+        out.resize(at + 4 + (self.nsyms + 1) * 6 + 8, 0);
+        let buf = &mut out[..];
+        let mut flush = |bits: &mut u64, count: &mut u32, at: &mut usize| {
+            buf[*at..*at + 8].copy_from_slice(&bits.to_le_bytes());
+            let whole = *count & !7;
+            *at += (whole >> 3) as usize;
+            // `whole` can be 64 only with count 64, which a symbol never
+            // reaches; checked shifts keep it defined anyway.
+            *bits = bits.checked_shr(whole).unwrap_or(0);
+            *count -= whole;
         };
-        for &sym in &self.syms {
+        // Per-block tables, so a literal is one load and a match two: the
+        // code and its length for each literal; for each match length the
+        // length code with its extra bits and their total size; the code and
+        // its length for each distance symbol.
+        let mut lit_tab = [0u32; 256];
+        for (t, (&c, &l)) in lit_tab.iter_mut().zip(lit_codes.iter().zip(lit_lens)) {
+            *t = u32::from(c) | (u32::from(l) << 16);
+        }
+        let mut len_tab = [0u32; 256];
+        for (v, t) in len_tab.iter_mut().enumerate() {
+            let code = LENGTH_CODE[v] as usize;
+            let len_bits = u32::from(lit_lens[257 + code]);
+            let extra = (v + MIN_MATCH - LENGTH_BASE[code] as usize) as u32;
+            let value = u32::from(lit_codes[257 + code]) | (extra << len_bits);
+            *t = (value << 8) | (len_bits + u32::from(LENGTH_EXTRA[code]));
+        }
+        let mut dist_tab = [0u32; 30];
+        for (t, (&c, &l)) in dist_tab.iter_mut().zip(dist_codes.iter().zip(dist_lens)) {
+            *t = u32::from(c) | (u32::from(l) << 16);
+        }
+        // Down to at most 7 bits before the first symbol.
+        flush(&mut bits, &mut count, &mut at);
+        for &sym in &self.syms[..self.nsyms] {
             let dist = (sym >> 16) as usize;
             let litlen = (sym & 0xFFFF) as usize;
             if dist == 0 {
-                put(u64::from(lit_codes[litlen]), u32::from(lit_lens[litlen]));
+                let e = lit_tab[litlen & 0xFF];
+                bits |= u64::from(e & 0xFFFF) << count;
+                count += e >> 16;
             } else {
-                let code = LENGTH_CODE[litlen] as usize;
-                let len_bits = u32::from(lit_lens[257 + code]);
-                let extra = (litlen + MIN_MATCH - LENGTH_BASE[code] as usize) as u64;
-                put(
-                    u64::from(lit_codes[257 + code]) | (extra << len_bits),
-                    len_bits + u32::from(LENGTH_EXTRA[code]),
-                );
+                let e = len_tab[litlen & 0xFF];
+                bits |= u64::from(e >> 8) << count;
+                count += e & 0xFF;
                 let d = dist_code(dist);
-                let dist_bits = u32::from(dist_lens[d]);
+                let e = dist_tab[d];
+                let dist_bits = e >> 16;
                 let extra = (dist - DIST_BASE[d] as usize) as u64;
-                put(
-                    u64::from(dist_codes[d]) | (extra << dist_bits),
-                    dist_bits + u32::from(DIST_EXTRA[d]),
-                );
+                bits |= (u64::from(e & 0xFFFF) | (extra << dist_bits)) << count;
+                count += dist_bits + u32::from(DIST_EXTRA[d]);
             }
+            flush(&mut bits, &mut count, &mut at);
         }
-        put(u64::from(lit_codes[256]), u32::from(lit_lens[256]));
+        bits |= u64::from(lit_codes[256]) << count;
+        count += u32::from(lit_lens[256]);
+        flush(&mut bits, &mut count, &mut at);
+        out.truncate(at);
+        // The rest of the writer keeps fewer than 32 bits in the buffer.
         self.bitbuf = bits;
         self.bitcnt = count;
     }
@@ -1639,7 +1794,7 @@ mod tests {
         assert!(d.win.iter().all(|&b| b == 0));
         assert!(d.head.iter().all(|&h| h == 0));
         assert!(d.prev.iter().all(|&h| h == 0));
-        assert!(d.syms.is_empty() && d.pending.is_empty());
+        assert!(d.nsyms == 0 && d.pending.is_empty());
         assert!(d.scratch.lit_freq.iter().all(|&f| f == 0));
         assert_eq!((d.total_in, d.bitbuf), (0, 0));
         let mut again = Vec::new();

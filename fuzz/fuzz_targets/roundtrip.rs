@@ -1,5 +1,7 @@
 //! Deflate then inflate: any data, level, window, and flush plan comes back
 //! unchanged, never uses a distance beyond the window, and zlib accepts it.
+//! The same flush plan with the input split into other pieces and the
+//! output drained through another buffer size gives the same bytes.
 
 #![no_main]
 
@@ -18,6 +20,7 @@ fuzz_target!(|input: &[u8]| {
     let mut packed = Vec::new();
     let mut buf = vec![0u8; out_size];
     // Flush points every few hundred bytes, chosen by the data itself.
+    let mut plan = Vec::new();
     let mut pos = 0;
     while pos <= data.len() {
         let step = 1 + usize::from(data.get(pos).copied().unwrap_or(0)) * 4;
@@ -28,6 +31,7 @@ fuzz_target!(|input: &[u8]| {
         } else {
             [Flush::None, Flush::None, Flush::Sync, Flush::Full][usize::from(data[pos] & 3)]
         };
+        plan.push((pos, end, flush));
         let mut chunk = &data[pos..end];
         loop {
             let p = d.compress(chunk, &mut buf, flush).unwrap();
@@ -43,6 +47,33 @@ fuzz_target!(|input: &[u8]| {
         }
         pos = end;
     }
+    // The same plan, each segment fed in pieces of 1 to 7 bytes.
+    let piece = 1 + usize::from(c % 7);
+    let mut again = Vec::new();
+    let mut buf = vec![0u8; 1 + usize::from(b) % 5];
+    let mut d = Deflater::new(level).with_window_bits(bits).unwrap();
+    for &(start, end, flush) in &plan {
+        let mut at = start;
+        loop {
+            let stop = (at + piece).min(end);
+            let f = if stop == end { flush } else { Flush::None };
+            let mut chunk = &data[at..stop];
+            loop {
+                let p = d.compress(chunk, &mut buf, f).unwrap();
+                chunk = &chunk[p.consumed..];
+                again.extend_from_slice(&buf[..p.produced]);
+                if p.status != Status::NeedsOutput && chunk.is_empty() {
+                    break;
+                }
+            }
+            at = stop;
+            if at == end {
+                break;
+            }
+        }
+    }
+    assert_eq!(again, packed);
+
     let mut i = Inflater::new().with_window_bits(bits).unwrap().with_limits(Limits::unlimited());
     let mut out = Vec::new();
     let p = i.finish_vec(&packed, &mut out).unwrap();
