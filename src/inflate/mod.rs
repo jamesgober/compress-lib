@@ -1237,7 +1237,9 @@ impl Inflater {
                     o += 8;
                 }
                 o = stop;
-            } else if distance == 1 {
+            } else if distance == 1 && o >= 1 {
+                // (At the start of this call's output a distance of 1 reaches
+                // into the ring: the general copy below handles it.)
                 let b = buf[o - 1];
                 buf[o..o + length].fill(b);
                 o += length;

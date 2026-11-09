@@ -295,6 +295,48 @@ fn test_inflate_fast_loop_short_periods_match_reference() {
     assert_eq!(&out[..p.produced], &want[..]);
 }
 
+/// A call that starts with a short-distance match reaching back into the
+/// previous call's output (the ring), in the fast loop. The first call gets
+/// the input up to the byte after the last prefix literal (3 + 8 * dist bits
+/// of it, plus 5 bits of the 7-bit length code), so it stops between
+/// symbols for input, and the match opens the second call at output offset
+/// 0. A distance of 1 there underflowed in the fast loop before 1.0 shipped
+/// (found by the soak).
+#[test]
+fn test_inflate_fast_loop_match_into_previous_call_at_offset_zero() {
+    for dist in 1..=15u32 {
+        for len in [3u32, 4, 8, 9, 64, 258] {
+            let prefix: Vec<u8> = (0..dist).map(|i| b'a' + i as u8).collect();
+            let data = fixed_block(|w| {
+                for &b in &prefix {
+                    w.fixed_literal(b);
+                }
+                w.fixed_match(len, dist);
+                for i in 0..32u8 {
+                    w.fixed_literal(i);
+                }
+            });
+            let mut want = prefix.clone();
+            for _ in 0..len {
+                want.push(want[want.len() - dist as usize]);
+            }
+            want.extend(0..32u8);
+            let mut inflater = Inflater::new();
+            let mut first = vec![0u8; 1024];
+            let cut = dist as usize + 1;
+            let p = inflater.decompress(&data[..cut], &mut first).unwrap();
+            assert_eq!(p.status, Status::NeedsInput);
+            assert_eq!(&first[..p.produced], &prefix[..]);
+            let mut second = vec![0u8; 1024];
+            let q = inflater.finish(&data[cut..], &mut second).unwrap();
+            assert_eq!(q.status, Status::Done, "len {len} dist {dist}");
+            let mut got = first[..p.produced].to_vec();
+            got.extend_from_slice(&second[..q.produced]);
+            assert_eq!(got, want, "len {len} dist {dist}");
+        }
+    }
+}
+
 /// A stream that fills its first reservation exactly decodes without
 /// growing the vector, and the spare capacity is used before growing.
 #[test]
