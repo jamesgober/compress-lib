@@ -256,6 +256,101 @@ fn test_inflate_every_length_and_short_distance_matches_reference() {
     }
 }
 
+/// The same matches inside one long block, so they decode in the fast loop
+/// (input left over and output room), the periods below eight included.
+#[test]
+fn test_inflate_fast_loop_short_periods_match_reference() {
+    let lens = [
+        3u32, 4, 5, 6, 7, 8, 9, 13, 15, 16, 17, 31, 64, 100, 257, 258,
+    ];
+    let mut want = Vec::new();
+    let data = fixed_block(|w| {
+        for dist in 1..=15u32 {
+            for &len in &lens {
+                for i in 0..dist {
+                    let b = b'a' + ((dist * 7 + i + len) % 26) as u8;
+                    w.fixed_literal(b);
+                    want.push(b);
+                }
+                w.fixed_match(len, dist);
+                for _ in 0..len {
+                    want.push(want[want.len() - dist as usize]);
+                }
+            }
+        }
+        // Literals after the last match keep input ahead of the fast loop.
+        for i in 0..32u8 {
+            w.fixed_literal(i);
+            want.push(i);
+        }
+    });
+    assert_eq!(decompress(&data).unwrap(), want);
+    assert_eq!(
+        miniz_oxide::inflate::decompress_to_vec(&data).unwrap(),
+        want
+    );
+    let mut out = vec![0u8; want.len() + 1024];
+    let p = Inflater::new().finish(&data, &mut out).unwrap();
+    assert_eq!(p.status, Status::Done);
+    assert_eq!(&out[..p.produced], &want[..]);
+}
+
+/// A call that starts with a short-distance match reaching back into the
+/// previous call's output (the ring), in the fast loop. The first call gets
+/// the input up to the byte after the last prefix literal (3 + 8 * dist bits
+/// of it, plus 5 bits of the 7-bit length code), so it stops between
+/// symbols for input, and the match opens the second call at output offset
+/// 0. A distance of 1 there underflowed in the fast loop before 1.0 shipped
+/// (found by the soak).
+#[test]
+fn test_inflate_fast_loop_match_into_previous_call_at_offset_zero() {
+    for dist in 1..=15u32 {
+        for len in [3u32, 4, 8, 9, 64, 258] {
+            let prefix: Vec<u8> = (0..dist).map(|i| b'a' + i as u8).collect();
+            let data = fixed_block(|w| {
+                for &b in &prefix {
+                    w.fixed_literal(b);
+                }
+                w.fixed_match(len, dist);
+                for i in 0..32u8 {
+                    w.fixed_literal(i);
+                }
+            });
+            let mut want = prefix.clone();
+            for _ in 0..len {
+                want.push(want[want.len() - dist as usize]);
+            }
+            want.extend(0..32u8);
+            let mut inflater = Inflater::new();
+            let mut first = vec![0u8; 1024];
+            let cut = dist as usize + 1;
+            let p = inflater.decompress(&data[..cut], &mut first).unwrap();
+            assert_eq!(p.status, Status::NeedsInput);
+            assert_eq!(&first[..p.produced], &prefix[..]);
+            let mut second = vec![0u8; 1024];
+            let q = inflater.finish(&data[cut..], &mut second).unwrap();
+            assert_eq!(q.status, Status::Done, "len {len} dist {dist}");
+            let mut got = first[..p.produced].to_vec();
+            got.extend_from_slice(&second[..q.produced]);
+            assert_eq!(got, want, "len {len} dist {dist}");
+        }
+    }
+}
+
+/// A stream that fills its first reservation exactly decodes without
+/// growing the vector, and the spare capacity is used before growing.
+#[test]
+fn test_vec_path_uses_reserved_capacity_before_growing() {
+    let data: Vec<u8> = (0..300_000u32)
+        .map(|i| (i % 251) as u8 ^ (i >> 9) as u8)
+        .collect();
+    let packed = crate::deflate::compress(&data);
+    let mut out = Vec::with_capacity(data.len());
+    Inflater::new().finish_vec(&packed, &mut out).unwrap();
+    assert_eq!(out, data);
+    assert_eq!(out.capacity(), data.len());
+}
+
 #[test]
 fn test_inflate_distance_32768_ok_and_one_past_history_rejected() {
     let lits = vec![b'z'; 32_768];

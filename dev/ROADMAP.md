@@ -69,10 +69,15 @@ Exit: API audit (names, `#[must_use]`, `#[non_exhaustive]`, Tier 1 first), docs 
 - [x] API audit: `io::Encoder` renamed `io::EncodeReader` (D-051); `#[must_use]` on the `io` constructors; every public item documented with a runnable example.
 - [x] Docs audit: README, `docs/API.md`, and rustdoc checked against the build; `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, `docs/STABILITY-1.0.md`.
 - [x] 24 h inflater fuzz run (D-050): 24 hours of fuzzing per decoder target (`inflate_raw`, `inflate_split`) on the 0.9 decoder, 78,459,234 and 21,727,907 runs, with no findings.
-- [ ] Release candidates (`1.0.0-rc.N`) only after James's go for 1.0; nothing else is open.
+- Release candidates (`1.0.0-rc.N`) were not needed: the 1.0 polish pass ran on the main line with a fresh 24 h fuzz run and soak on the final code (D-061).
 
-## v1.0.0 - Stable
-Only on James's explicit go, after the audit is recorded in `docs/STABILITY-1.0.md`.
+## v1.0.0 - Stable (DONE, 2026-11-10)
+Exit: James's go; the audit recorded in `docs/STABILITY-1.0.md`; every gap, deferral, and missed target revisited; a fresh 24 h fuzz run and 4 h soak on the final code.
+- [x] Polish pass: decoder vector paths and short periods (D-058); level 1, the block writer, and chain walks (D-055, D-056, D-058); measured on hosted runners and recorded (D-061).
+- [x] Audit fixes: output independent of input splits at levels 0 and 1 (D-057); one-shot compression never returns a truncated stream (D-059); the 1.0 soak found an index underflow in the new short-period decoder code, fixed before release, and the `inflate_split` target widened to reach it (D-062).
+- [x] API review for the 1.x freeze: `io::DecodeReader`, `io::EncodeWriter`, `Flush` at the root (D-060); cargo-semver-checks against 0.9.0.
+- [x] 24 h fuzz on the final code (`inflate_raw` 151,357,523 runs, `inflate_split` 101,726,569, `roundtrip` 56,085,017; 309 million in all), no findings.
+- [x] 4 h soak on the final code: 2,098,028 rounds in 4 h 11 min of wall time, heap flat (21,318 bytes live between rounds, peak 1,745,428).
 
 ## After 1.0
 - 1.1: brotli decode (BR-01), feature `brotli`.

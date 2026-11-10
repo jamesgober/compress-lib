@@ -9,7 +9,11 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     let Some((&shape, stream)) = data.split_first() else { return };
     let in_step = 1 + usize::from(shape & 0x0F) * 3;
-    let out_step = 1 + usize::from(shape >> 4) * 17;
+    // Output buffers on both sides of the fast loop's 274-byte margin, so
+    // calls start in the fast loop with history from earlier calls (the
+    // 0.9 range stopped at 256 bytes and never got there).
+    let out_step = [1, 2, 7, 64, 255, 273, 274, 300, 512, 1000, 2048, 4096, 8191, 16_384, 32_768, 70_000]
+        [usize::from(shape >> 4)];
     let limits = Limits::new().with_max_output(1 << 20);
 
     let mut whole = Inflater::new().with_limits(limits);

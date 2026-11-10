@@ -357,15 +357,15 @@ impl Read for Trickle<'_> {
 fn test_framing_io_adapters_every_format() {
     let data = sample();
     for format in [Format::Raw, Format::Zlib, Format::Gzip] {
-        // Writer -> Reader.
-        let mut w = io::Writer::new(Vec::new(), format, Level::DEFAULT);
+        // EncodeWriter -> DecodeReader.
+        let mut w = io::EncodeWriter::new(Vec::new(), format, Level::DEFAULT);
         for chunk in data.chunks(777) {
             w.write_all(chunk).unwrap();
         }
         w.flush().unwrap();
         let packed = w.finish().unwrap();
         for step in [1usize, 5000] {
-            let mut r = io::Reader::new(
+            let mut r = io::DecodeReader::new(
                 Trickle {
                     data: &packed,
                     step,
@@ -403,12 +403,12 @@ fn test_framing_io_errors_surface_as_io_errors() {
     let n = packed.len();
     packed[n - 6] ^= 0xFF;
     let mut out = Vec::new();
-    let err = io::Reader::new(&packed[..], Format::Gzip)
+    let err = io::DecodeReader::new(&packed[..], Format::Gzip)
         .read_to_end(&mut out)
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     let truncated = &gzip::compress(b"short")[..10];
-    let err = io::Reader::new(truncated, Format::Gzip)
+    let err = io::DecodeReader::new(truncated, Format::Gzip)
         .read_to_end(&mut Vec::new())
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);

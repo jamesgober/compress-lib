@@ -13,7 +13,7 @@
 //! ## Tier 1
 //!
 //! Add it with Cargo's rename, `compress = { package = "compress-lib", version
-//! = "0.9" }`, and code reads `compress::`. One call each way; decoding is
+//! = "1" }`, and code reads `compress::`. One call each way; decoding is
 //! capped at 64 MiB of output by default:
 //!
 //! ```
@@ -82,9 +82,9 @@
 //!
 //! ## Status
 //!
-//! `0.9.0`, beta: the API is what 1.0 will freeze, and the 1.0 audit is
-//! recorded in `docs/STABILITY-1.0.md` in the
-//! [repository](https://github.com/jamesgober/compress-lib), with
+//! `1.0.0`, stable: no breaking change to the public API before 2.0. What
+//! 1.x promises and the audit behind it are in `docs/STABILITY-1.0.md` in
+//! the [repository](https://github.com/jamesgober/compress-lib), with
 //! `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/PERFORMANCE.md`, and
 //! `docs/SECURITY.md` beside it.
 
@@ -127,11 +127,25 @@ mod level;
 mod limits;
 mod stream;
 
+pub use deflate::Flush;
 pub use error::{Error, ErrorKind};
 pub use format::{Decoder, Encoder, Format, decompress, decompress_with};
 pub use level::Level;
 pub use limits::Limits;
 pub use stream::{Progress, Status};
+
+/// Ends a one-shot compression. The encoders fail only when the output
+/// vector cannot grow, and a one-shot call has no error to return, so that
+/// aborts as growing a `Vec` does rather than hand back a truncated stream
+/// (D-059).
+pub(crate) fn one_shot_or_abort(result: Result<Progress, Error>, out: &alloc::vec::Vec<u8>) {
+    if result.is_err() {
+        let wanted = out.capacity().saturating_mul(2).max(1);
+        let layout =
+            core::alloc::Layout::array::<u8>(wanted).unwrap_or(core::alloc::Layout::new::<u8>());
+        alloc::alloc::handle_alloc_error(layout);
+    }
+}
 
 /// Overwrites every element of `v` with the default value, spare capacity
 /// included, keeping its length, and passes it through

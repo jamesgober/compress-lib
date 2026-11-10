@@ -14,7 +14,7 @@ compress-lib calls no operating system interface: the codecs are pure computatio
 
 ## Determinism
 
-The same input, level, window, and flush sequence give the same compressed bytes on every platform and pointer width (NFR-7): the encoder uses no platform-dependent arithmetic, no hash randomisation, and no floating point, and gzip headers default to time stamp 0 and OS 255. The test suite checks that output does not depend on how input was split; the hosted benchmarks print the same compressed sizes on Linux, macOS, and Windows.
+The same input, level, window, and flush sequence give the same compressed bytes on every platform and pointer width (NFR-7): the encoder uses no platform-dependent arithmetic, no hash randomisation, and no floating point, and gzip headers default to time stamp 0 and OS 255. Nor do the bytes depend on how the input was split or how large the output buffers were: the test suite checks it at every level and several window sizes, and the `roundtrip` fuzz target re-compresses every input in other pieces. The hosted benchmarks print the same compressed sizes on Linux, macOS, and Windows.
 
 ## Byte order and width
 
@@ -26,7 +26,7 @@ Without the default `std` feature the crate is `no_std` with `alloc`: everything
 
 ## Memory allocation
 
-Engines allocate when they are built and, for the vector APIs, when the output vector grows; vector growth uses `try_reserve`, so an allocation failure is `AllocationFailed`, not an abort. The slice APIs allocate nothing after construction (counting-allocator test).
+Engines allocate when they are built and, for the vector APIs, when the output vector grows; vector growth uses `try_reserve`, so an allocation failure is `AllocationFailed`, not an abort. The one-shot `compress` functions return a plain `Vec` and so have no error to report: they abort on allocation failure as growing a `Vec` does, rather than return a truncated stream (D-059). The slice APIs allocate nothing after construction (counting-allocator test).
 
 ## Performance by platform
 

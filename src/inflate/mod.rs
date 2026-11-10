@@ -27,6 +27,8 @@ const PRECODE_ORDER: [u8; 19] = [
 ];
 /// Most output `decompress_vec` reserves in one step.
 const VEC_CHUNK: usize = 64 << 10;
+/// Spare capacity worth decoding into before the vector grows.
+const VEC_MIN_SPARE: usize = 4 << 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -638,8 +640,15 @@ impl Inflater {
             let made = have - start;
             let cap_room = usize::try_from(self.limits.max_output().saturating_sub(self.total_out))
                 .unwrap_or(usize::MAX);
-            let want = cap_room.min(step);
-            if out.capacity() - have < want {
+            let mut want = cap_room.min(step);
+            let spare = out.capacity() - have;
+            if spare < want && spare >= want.min(VEC_MIN_SPARE) {
+                // Use what is already reserved before growing: a stream that
+                // fits its reservation would otherwise reallocate and copy
+                // everything for its last few bytes.
+                want = spare;
+            }
+            if spare < want {
                 // Grow the vector geometrically (as `Vec` does) so that many
                 // small calls reallocate O(log n) times, but never past what
                 // the cap still allows this stream to produce. Once the next
@@ -1226,6 +1235,30 @@ impl Inflater {
                     buf.copy_within(s..s + 8, o);
                     s += 8;
                     o += 8;
+                }
+                o = stop;
+            } else if distance == 1 && o >= 1 {
+                // (At the start of this call's output a distance of 1 reaches
+                // into the ring: the general copy below handles it.)
+                let b = buf[o - 1];
+                buf[o..o + length].fill(b);
+                o += length;
+            } else if distance <= o {
+                // A period of 2 to 7 bytes. An eight-byte copy from one
+                // period back is right for its first `distance` bytes, so
+                // step by the period until a multiple of it of at least
+                // eight bytes is written, then copy eight bytes at a time
+                // from that far back. Writes stay inside the FAST_OUT margin.
+                let period = distance * 8usize.div_ceil(distance);
+                let stop = o + length;
+                let mut w = o;
+                while w < o + period - distance {
+                    buf.copy_within(w - distance..w - distance + 8, w);
+                    w += distance;
+                }
+                while w < stop {
+                    buf.copy_within(w - period..w - period + 8, w);
+                    w += 8;
                 }
                 o = stop;
             } else {

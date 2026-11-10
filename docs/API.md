@@ -3,13 +3,13 @@
     <br><b>compress-lib API</b>
 </h1>
 
-The complete public API planned for 1.0, each item with the version it arrives in. Items marked with a later version do not exist in the current release; the crate exposes only what is implemented. Item ids match `dev/PLAN.md` section 6.
+The public API of 1.x, each item with the version it arrived in. Items marked with a later version (brotli) do not exist yet; the crate exposes only what is implemented. Item ids match `dev/PLAN.md` section 6.
 
 Add the crate with Cargo's rename so code reads `compress::`:
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.9" }
+compress = { package = "compress-lib", version = "1" }
 ```
 
 ## Contents
@@ -237,7 +237,7 @@ The streaming encoder (DF-30 to DF-37).
 #[non_exhaustive] pub enum Flush { None, Sync, Full, Finish }
 ```
 
-`Sync` byte-aligns and writes an empty stored block (`00 00 FF FF`); `Full` does the same and forgets history; `Finish` writes the final block.
+`Sync` byte-aligns and writes an empty stored block (`00 00 FF FF`); `Full` does the same and forgets history; `Finish` writes the final block. `Progress`, `Status`, and (since 1.0) `Flush` are also at the crate root, since every engine uses them.
 
 ---
 
@@ -297,7 +297,7 @@ HTTP's `deflate` content coding is zlib framing (RFC 9110 section 8.4.1.2): use 
 
 ## `io` adapters
 
-Feature `std` (default), 0.5 (IO-01 to IO-03): `io::Reader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`), `io::Writer<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::EncodeReader<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
+Feature `std` (default), 0.5 (IO-01 to IO-03; named as below since 1.0): `io::DecodeReader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`), `io::EncodeWriter<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::EncodeReader<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
 
 ---
 

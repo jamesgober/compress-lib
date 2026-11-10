@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>unsafe</code> is forbidden. <code>no_std</code> with <code>alloc</code> when the default <code>std</code> feature is off.
     </p>
     <blockquote>
-        <strong>Status: <code>0.9.0</code>, beta.</strong> The API is the one 1.0 will freeze. Raw DEFLATE, zlib, and gzip both ways, the WebSocket permessage-deflate helpers, format detection, and <code>std::io</code> adapters; measured (<a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>), hardened (<a href="./docs/SECURITY.md"><code>docs/SECURITY.md</code></a>), and audited for 1.0 (<a href="./docs/STABILITY-1.0.md"><code>docs/STABILITY-1.0.md</code></a>). The design is in <a href="./docs/ARCHITECTURE.md"><code>docs/ARCHITECTURE.md</code></a>; the complete API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: <code>1.0.0</code>, stable.</strong> No breaking change to the API before 2.0. Raw DEFLATE, zlib, and gzip both ways, the WebSocket permessage-deflate helpers, format detection, and <code>std::io</code> adapters; measured (<a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>), hardened (<a href="./docs/SECURITY.md"><code>docs/SECURITY.md</code></a>), and audited for 1.0 (<a href="./docs/STABILITY-1.0.md"><code>docs/STABILITY-1.0.md</code></a>). The design is in <a href="./docs/ARCHITECTURE.md"><code>docs/ARCHITECTURE.md</code></a>; the complete API is in <a href="./docs/API.md"><code>docs/API.md</code></a>. Design: <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a>; schedule: <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -44,7 +44,7 @@ Raw DEFLATE inflate and deflate with window bits 8 to 15 and levels 0 to 9; sync
 
 ```toml
 [dependencies]
-compress = { package = "compress-lib", version = "0.9" }
+compress = { package = "compress-lib", version = "1" }
 ```
 
 One call each way, capped at 64 MiB of output by default:
@@ -90,7 +90,7 @@ match p.status {
 }
 ```
 
-And `std::io`: `compress::io::Reader`, `Writer`, `EncodeReader`, `DecodeWriter`.
+And `std::io`: `compress::io::DecodeReader`, `EncodeWriter`, `EncodeReader`, `DecodeWriter`.
 
 The complete planned API, with the version each item arrives in, is in [`docs/API.md`](./docs/API.md).
 

@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 compress-lib = { path = ".." }
+# The last release, for A/B timing in the `quick` tool.
+compress-lib-base = { package = "compress-lib", version = "=0.9.0" }
 criterion = { version = "0.5", default-features = false }
 miniz_oxide = { version = "0.8", features = ["with-alloc"] }
 zlib-rs = { version = "0.6", default-features = false, features = ["rust-allocator"] }
@@ -26,6 +28,15 @@ flate2-zlib = ["flate2", "flate2/zlib"]
 # flate2 over zlib-ng (needs a C compiler and CMake).
 flate2-zlib-ng = ["flate2", "flate2/zlib-ng"]
 
+# The corpora library and the `quick` tool are not benchmarks: keep them
+# out of `cargo bench`, which passes criterion's flags to every target.
+[lib]
+bench = false
+
+[[bin]]
+name = "quick"
+bench = false
+
 [[bench]]
 name = "compare"
 harness = false
@@ -37,3 +48,7 @@ codegen-units = 1
 # Keeps this crate out of any parent workspace.
 [workspace]
 members = ["."]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

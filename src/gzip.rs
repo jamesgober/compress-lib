@@ -44,6 +44,9 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
 
 /// Compresses `data` into a gzip member at `level`.
 ///
+/// Allocation failure aborts, as for any `Vec`; [`Encoder::compress_vec`]
+/// reports it as `AllocationFailed` instead.
+///
 /// # Examples
 ///
 /// ```
@@ -57,8 +60,8 @@ pub fn compress(data: &[u8]) -> Vec<u8> {
 pub fn compress_with(data: &[u8], level: Level) -> Vec<u8> {
     let mut encoder = Encoder::new(level);
     let mut out = Vec::with_capacity(data.len() / 2 + 64);
-    // Fails only when the vector cannot grow, which aborts first.
-    let _ = encoder.compress_vec(data, &mut out, Flush::Finish);
+    let result = encoder.compress_vec(data, &mut out, Flush::Finish);
+    crate::one_shot_or_abort(result, &out);
     out
 }
 

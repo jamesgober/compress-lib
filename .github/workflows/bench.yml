@@ -33,6 +33,11 @@ jobs:
         shell: bash
         run: |
           (lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)") || sysctl -n machdep.cpu.brand_string 2>/dev/null || wmic cpu get name 2>/dev/null || true
+      - name: Interleaved A/B against the last release and miniz_oxide
+        shell: bash
+        working-directory: bench-compare
+        run: |
+          QUICK_ROUNDS=15 cargo run --release --bin quick 2>&1 | tee quick.txt
       - name: Benchmarks
         shell: bash
         working-directory: bench-compare
@@ -47,6 +52,9 @@ jobs:
             echo '```'
             grep -E "^size" bench.txt
             awk '/^(deflate|inflate|gzip|message)\//{n=$1} /thrpt:/{print n, $(NF-3), $(NF-2)}' bench.txt
+            echo '```'
+            echo '```'
+            grep -E "^(deflate|inflate) " quick.txt
             echo '```'
           } | tee summary.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

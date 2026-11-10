@@ -209,16 +209,66 @@ fn test_roundtrip_tiny_output_buffers() {
 
 #[test]
 fn test_roundtrip_output_independent_of_input_split() {
-    let data = &corpus()[4][..60_000];
-    let whole = deflate::compress_with(data, Level::DEFAULT);
-    for step in [1usize, 7, 100, 4096, 30_000] {
-        let mut d = Deflater::new(Level::DEFAULT);
-        let mut out = Vec::new();
-        for chunk in data.chunks(step) {
-            d.compress_vec(chunk, &mut out, Flush::None).unwrap();
+    let corpus = corpus();
+    // Text, random bytes (level 1 skips ahead on runs of misses), and the
+    // mix of both.
+    for data in [&corpus[4][..60_000], &corpus[5][..], &corpus[6][..60_000]] {
+        for level in 0..=9 {
+            let level = Level::new(level).unwrap();
+            let whole = deflate::compress_with(data, level);
+            for step in [1usize, 7, 100, 4096, 30_000] {
+                let mut d = Deflater::new(level);
+                let mut out = Vec::new();
+                for chunk in data.chunks(step) {
+                    d.compress_vec(chunk, &mut out, Flush::None).unwrap();
+                }
+                d.compress_vec(b"", &mut out, Flush::Finish).unwrap();
+                assert!(out == whole, "level {} split {step}", level.get());
+            }
         }
-        d.compress_vec(b"", &mut out, Flush::Finish).unwrap();
-        assert_eq!(out, whole, "split {step}");
+    }
+}
+
+/// The same with small windows (level 0 cuts smaller blocks there), and
+/// with output drained through buffers of a few bytes.
+#[test]
+fn test_roundtrip_output_independent_of_split_window_and_output_buffer() {
+    let corpus = corpus();
+    let data = &corpus[6][..40_000];
+    for bits in [8u8, 9, 12, 15] {
+        for level in [0u8, 1, 2, 6, 9] {
+            let level = Level::new(level).unwrap();
+            let mut d = Deflater::new(level).with_window_bits(bits).unwrap();
+            let mut whole = Vec::new();
+            d.compress_vec(data, &mut whole, Flush::Finish).unwrap();
+            for (step, out_size) in [(1usize, 1usize), (13, 3), (1000, 7), (5000, 64)] {
+                let mut d = Deflater::new(level).with_window_bits(bits).unwrap();
+                let mut out = Vec::new();
+                let mut buf = vec![0u8; out_size];
+                let chunks: Vec<&[u8]> = data.chunks(step).collect();
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let flush = if i + 1 == chunks.len() {
+                        Flush::Finish
+                    } else {
+                        Flush::None
+                    };
+                    let mut input = *chunk;
+                    loop {
+                        let p = d.compress(input, &mut buf, flush).unwrap();
+                        out.extend_from_slice(&buf[..p.produced]);
+                        input = &input[p.consumed..];
+                        if p.status != Status::NeedsOutput && input.is_empty() {
+                            break;
+                        }
+                    }
+                }
+                assert!(
+                    out == whole,
+                    "bits {bits} level {} split {step} output {out_size}",
+                    level.get()
+                );
+            }
+        }
     }
 }
 
