@@ -13,6 +13,46 @@
 
 ---
 
+## [1.0.0] - 2026-11-10
+
+Stable: the API frozen for 1.x, faster on both sides, and three defects
+found by the 1.0 audit fixed.
+
+### Changed
+
+- `io::Reader` is now `io::DecodeReader` and `io::Writer` is now
+  `io::EncodeWriter`, so all four adapters say what they do
+  (`DecodeReader`, `EncodeWriter`, `EncodeReader`, `DecodeWriter`). This is
+  the only breaking change from 0.9.
+- `Flush` is also exported at the crate root, beside `Progress` and
+  `Status`.
+- Level 1 writes a three-byte match more than 8 KiB back as literals:
+  output is 2.3 to 2.5 percent smaller on JSON and HTML. The compressed
+  bytes of levels 2 to 9 are unchanged.
+- Faster: decoding through the vector and one-shot paths (1.06 to 1.28
+  times 0.9 on Windows), periods of 2 to 7 bytes in the decoder's fast
+  loop, and compression at every level (up to 1.31 times 0.9), from a dedicated
+  level-1 loop, a block writer with per-block code tables and one store
+  per symbol, and a wider check before each chain candidate.
+
+### Fixed
+
+- The compressed bytes at levels 0 and 1 depended on how the input was
+  split across calls (level 0 cut stored blocks where input arrived; level
+  1 restarted its run of misses on every call). Output now depends only on
+  the input, the settings, and the flush sequence, at every level.
+- The one-shot `compress` functions (raw DEFLATE, zlib, gzip) returned a
+  truncated stream as if complete when the output vector could not grow.
+  They now abort, as growing a `Vec` does; the streaming encoders still
+  report `AllocationFailed`.
+
+### Verified
+
+- 24-hour fuzz run on the final code (`inflate_raw` 151,357,523 runs, `inflate_split` 101,726,569, `roundtrip` 56,085,017; 309 million in all), no findings.
+- 4-hour soak on the final code: 2,098,028 rounds in 4 h 11 min of wall time, heap flat (21,318 bytes live between rounds, peak 1,745,428).
+- cargo-semver-checks against 0.9.0: the two `io` renames are the only
+  breaking changes.
+
 ## [0.9.0] - 2026-11-08
 
 The beta: the 1.0 API audit and the documents that go with 1.0.
@@ -238,7 +278,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jamesgober/compress-lib/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/jamesgober/compress-lib/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/compress-lib/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/compress-lib/compare/v0.6.0...v0.7.0

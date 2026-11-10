@@ -3,7 +3,7 @@
     <br><b>compress-lib API</b>
 </h1>
 
-The complete public API planned for 1.0, each item with the version it arrives in. Items marked with a later version do not exist in the current release; the crate exposes only what is implemented. Item ids match `dev/PLAN.md` section 6.
+The public API of 1.x, each item with the version it arrived in. Items marked with a later version (brotli) do not exist yet; the crate exposes only what is implemented. Item ids match `dev/PLAN.md` section 6.
 
 Add the crate with Cargo's rename so code reads `compress::`:
 
