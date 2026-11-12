@@ -159,17 +159,6 @@ impl Decoder {
         })
     }
 
-    /// Lets a gzip decoder stop before bytes that do not start a member
-    /// (raw and zlib decoders stop at their end anyway; the caller decides
-    /// what follows).
-    #[cfg(feature = "std")]
-    pub(crate) fn with_trailing_data(self, allow: bool) -> Self {
-        Self(match self.0 {
-            Inner::Gzip(d) => Inner::Gzip(d.with_trailing_data(allow)),
-            other => other,
-        })
-    }
-
     /// The format decoded.
     ///
     /// # Examples
@@ -348,29 +337,6 @@ impl Decoder {
             Inner::Gzip(d) => d.reset(),
         }
     }
-
-    /// Zeroes the window, tables, and buffers of the underlying decoder,
-    /// then resets it. For connections that carried secrets; see
-    /// [`Inflater::wipe`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use compress_lib::{Decoder, Format, gzip};
-    ///
-    /// let mut dec = Decoder::new(Format::Gzip);
-    /// dec.finish_vec(&gzip::compress(b"token"), &mut Vec::new())?;
-    /// dec.wipe();
-    /// assert_eq!(dec.total_out(), 0);
-    /// # Ok::<(), compress_lib::Error>(())
-    /// ```
-    pub fn wipe(&mut self) {
-        match &mut self.0 {
-            Inner::Raw(d) => d.wipe(),
-            Inner::Zlib(d) => d.wipe(),
-            Inner::Gzip(d) => d.wipe(),
-        }
-    }
 }
 
 /// A streaming encoder for any [`Format`].
@@ -497,28 +463,6 @@ impl Encoder {
             Inner::Raw(e) => e.reset(),
             Inner::Zlib(e) => e.reset(),
             Inner::Gzip(e) => e.reset(),
-        }
-    }
-
-    /// Zeroes the window, hash chains, and buffers of the underlying
-    /// encoder, then resets it. For connections that carried secrets; see
-    /// [`Deflater::wipe`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use compress_lib::{Encoder, Format, Level, deflate::Flush};
-    ///
-    /// let mut enc = Encoder::new(Format::Zlib, Level::DEFAULT);
-    /// enc.compress_vec(b"token=secret", &mut Vec::new(), Flush::Finish)?;
-    /// enc.wipe();
-    /// # Ok::<(), compress_lib::Error>(())
-    /// ```
-    pub fn wipe(&mut self) {
-        match &mut self.0 {
-            Inner::Raw(e) => e.wipe(),
-            Inner::Zlib(e) => e.wipe(),
-            Inner::Gzip(e) => e.wipe(),
         }
     }
 }

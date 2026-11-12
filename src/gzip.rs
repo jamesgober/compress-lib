@@ -152,17 +152,6 @@ pub struct GzipHeader {
 }
 
 impl GzipHeader {
-    /// Zeroes the name, comment, and extra field (spare capacity included).
-    pub(crate) fn wipe(&mut self) {
-        for v in [&mut self.name, &mut self.comment, &mut self.extra]
-            .into_iter()
-            .flatten()
-        {
-            crate::wipe_vec(v);
-        }
-        *self = Self::default();
-    }
-
     /// No name, comment, or extra field; time stamp 0; OS "unknown".
     ///
     /// # Examples
@@ -411,6 +400,7 @@ enum State {
 /// assert_eq!(&out[..p.produced], b"streamed");
 /// # Ok::<(), compress_lib::Error>(())
 /// ```
+#[derive(Debug)]
 pub struct Decoder {
     inflater: Inflater,
     limits: Limits,
@@ -433,22 +423,6 @@ pub struct Decoder {
     out_before: u64,
     consumed_total: u64,
     failed: Option<Error>,
-}
-
-impl core::fmt::Debug for Decoder {
-    /// Header fields and checksums in progress are not shown.
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Decoder")
-            .field("inflater", &self.inflater)
-            .field("limits", &self.limits)
-            .field("state", &self.state)
-            .field("multi", &self.multi)
-            .field("allow_trailing", &self.allow_trailing)
-            .field("members", &self.members)
-            .field("total_in", &self.consumed_total)
-            .field("failed", &self.failed)
-            .finish_non_exhaustive()
-    }
 }
 
 impl Default for Decoder {
@@ -543,12 +517,6 @@ impl Decoder {
 
     /// Allows bytes that are not a gzip member after the last member (some
     /// tools pad files with zeros); `consumed` stops before them.
-    ///
-    /// Bytes that begin with the gzip magic (`1F`, or `1F 8B`) are read as
-    /// another member, as GNU gzip reads them, so trailing data must not
-    /// start with `1F`: a lone `1F` or a damaged member after the last one
-    /// is an error (`UnexpectedEnd` or the member's own error), not
-    /// trailing data.
     ///
     /// # Examples
     ///
@@ -705,43 +673,10 @@ impl Decoder {
         self.crc = Crc32::new();
         self.header_crc = Crc32::new();
         self.header_bytes = 0;
-        self.extra_left = 0;
-        self.member_len = 0;
-        self.trailer = [0; 8];
         self.members = 0;
         self.out_before = 0;
         self.consumed_total = 0;
         self.failed = None;
-    }
-
-    /// Zeroes the window, the decode tables, and the header fields read so
-    /// far, then resets the decoder. For connections that carried secrets.
-    ///
-    /// The zeroing goes through [`core::hint::black_box`]; see
-    /// [`Inflater::wipe`](crate::deflate::Inflater::wipe) for what that can
-    /// promise without `unsafe`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use compress_lib::gzip;
-    ///
-    /// let mut dec = gzip::Decoder::new();
-    /// dec.finish_vec(&gzip::compress(b"token"), &mut Vec::new())?;
-    /// dec.wipe();
-    /// assert_eq!(dec.total_out(), 0);
-    /// # Ok::<(), compress_lib::Error>(())
-    /// ```
-    pub fn wipe(&mut self) {
-        self.inflater.wipe();
-        crate::wipe_vec(&mut self.field);
-        if let Some(header) = &mut self.header {
-            header.wipe();
-        }
-        self.fixed = [0; 10];
-        self.trailer = [0; 8];
-        core::hint::black_box((&self.fixed, &self.trailer));
-        self.reset();
     }
 
     /// Decompresses as much of `input` into `output` as fits; more input may
@@ -1078,15 +1013,11 @@ impl Decoder {
                         return Err(self.fail(ErrorKind::TooManyMembers, ip));
                     }
                     // A new member: a new DEFLATE stream (no history across
-                    // members), with the output cap and the ratio bound
-                    // shared by all (the ratio counts every byte taken so
-                    // far, headers and trailers included).
+                    // members), with the output cap shared by all.
                     self.out_before += self.inflater.total_out();
                     self.inflater.reset();
                     self.inflater
                         .set_max_output(self.limits.max_output().saturating_sub(self.out_before));
-                    self.inflater
-                        .set_ratio_base(self.consumed_total + ip as u64, self.out_before);
                     self.crc = Crc32::new();
                     self.member_len = 0;
                     self.index = 0;
@@ -1118,6 +1049,7 @@ impl Decoder {
 /// assert_eq!(gzip::decompress(&packed)?, b"part one, part two");
 /// # Ok::<(), compress_lib::Error>(())
 /// ```
+#[derive(Debug)]
 pub struct Encoder {
     deflater: Deflater,
     header: GzipHeader,
@@ -1126,18 +1058,6 @@ pub struct Encoder {
     pending_pos: usize,
     header_written: bool,
     trailer_written: bool,
-}
-
-impl core::fmt::Debug for Encoder {
-    /// Output in waiting and the header fields are not shown.
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Encoder")
-            .field("deflater", &self.deflater)
-            .field("pending", &(self.pending.len() - self.pending_pos))
-            .field("header_written", &self.header_written)
-            .field("trailer_written", &self.trailer_written)
-            .finish_non_exhaustive()
-    }
 }
 
 impl Default for Encoder {
@@ -1217,31 +1137,6 @@ impl Encoder {
         self.pending_pos = 0;
         self.header_written = false;
         self.trailer_written = false;
-    }
-
-    /// Zeroes the window, hash chains, and buffers (they hold plaintext),
-    /// then starts a new member. The header given to the encoder is kept.
-    /// For connections that carried secrets.
-    ///
-    /// The zeroing goes through [`core::hint::black_box`]; see
-    /// [`Inflater::wipe`](crate::deflate::Inflater::wipe) for what that can
-    /// promise without `unsafe`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use compress_lib::{Level, deflate::Flush, gzip};
-    ///
-    /// let mut enc = gzip::Encoder::new(Level::DEFAULT);
-    /// enc.compress_vec(b"token=secret", &mut Vec::new(), Flush::Finish)?;
-    /// enc.wipe();
-    /// assert_eq!(enc.total_in(), 0);
-    /// # Ok::<(), compress_lib::Error>(())
-    /// ```
-    pub fn wipe(&mut self) {
-        self.deflater.wipe();
-        crate::wipe_vec(&mut self.pending);
-        self.reset();
     }
 
     /// Uncompressed bytes taken.

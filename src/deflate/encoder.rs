@@ -373,17 +373,6 @@ pub struct Deflater {
     /// Start of the current block's input in `win` (negative once slid out).
     block_start: isize,
     hash_bits: u32,
-    /// Bytes hashed per position: 3 at levels 1 to 3, 4 at the lazy levels
-    /// 4 to 9 (D-065), as the mask over a four-byte load.
-    hash_mask: u32,
-    /// Chain steps past `CHAIN_FREE` the lazy search may still take:
-    /// `CHAIN_BUDGET` more per input byte, at most `CHAIN_BANK` banked
-    /// (T-14, D-065). Earned up to the stream position `budget_pos`.
-    chain_budget: i64,
-    budget_pos: u64,
-    /// Bytes the window has slid since the stream began, so a window
-    /// position plus this is a position in the stream.
-    slid: u64,
     head: Vec<u16>,
     prev: Vec<u16>,
     match_available: bool,
@@ -481,10 +470,6 @@ impl Deflater {
             lookahead: 0,
             block_start: 1,
             hash_bits,
-            hash_mask: hash_mask(level),
-            chain_budget: CHAIN_BANK,
-            budget_pos: 0,
-            slid: 0,
             head: vec![0; 1 << hash_bits],
             prev: vec![0; wsize],
             match_available: false,
@@ -586,12 +571,6 @@ impl Deflater {
     /// Changes the level for data not yet compressed. The current block is
     /// ended first when the change switches to or from level 0.
     ///
-    /// Memory stays at its built size when the change follows a call that
-    /// returned `NeedsInput` or `Done`. Changing the level while output is
-    /// still waiting (`NeedsOutput`) compresses the waiting input under the
-    /// old level at once, and its blocks wait with that output, so the
-    /// output buffer may grow past its built size.
-    ///
     /// # Examples
     ///
     /// ```
@@ -610,7 +589,7 @@ impl Deflater {
         let next = params(level);
         if (level == 0) != (self.level == 0) {
             // Finish the input waiting under the old level first.
-            self.process(true, false);
+            self.process(true);
             self.end_block(false);
         } else if self.params.lazy_matching && !next.lazy_matching && self.match_available {
             // Lazy matching holds the byte before `strstart` back; greedy
@@ -623,13 +602,6 @@ impl Deflater {
             // Level 1 left the chains stale (D-055); empty chains are only
             // shorter.
             self.prev.fill(0);
-        }
-        if hash_mask(level) != self.hash_mask {
-            // The chains were built on the other hash width. Empty them (only
-            // shorter), so every head entry has the width `reset` assumes.
-            self.head.fill(0);
-            self.prev.fill(0);
-            self.hash_mask = hash_mask(level);
         }
         // No pending match crosses the change.
         self.match_length = MIN_MATCH - 1;
@@ -714,9 +686,8 @@ impl Deflater {
         let end = self.strstart + self.lookahead;
         if self.total_in as usize + 1 < self.size && end < self.head.len() / 4 {
             let shift = 32 - self.hash_bits;
-            let mask = self.hash_mask;
             for pos in 1..end.saturating_sub(MIN_MATCH - 1) {
-                self.head[hash(load32(&self.win, pos), mask, shift)] = 0;
+                self.head[hash3(load32(&self.win, pos), shift)] = 0;
             }
         } else {
             self.head.fill(0);
@@ -724,9 +695,6 @@ impl Deflater {
         self.strstart = 1;
         self.lookahead = 0;
         self.block_start = 1;
-        self.chain_budget = CHAIN_BANK;
-        self.budget_pos = 0;
-        self.slid = 0;
         self.match_available = false;
         self.match_length = MIN_MATCH - 1;
         self.prev_length = MIN_MATCH - 1;
@@ -813,7 +781,7 @@ impl Deflater {
         if self.level != 0 {
             let end = 1 + take;
             let mut pos = 1;
-            while pos + hash_len(self.hash_mask) <= end {
+            while pos + MIN_MATCH <= end {
                 self.insert(pos);
                 pos += 1;
             }
@@ -887,7 +855,7 @@ impl Deflater {
             consumed += self.fill_window(&input[consumed..]);
             let all_in = consumed == input.len();
             let flushing = flush != Flush::None && all_in;
-            self.process(flushing, true);
+            self.process(flushing);
             if self.pending_left() > 0 {
                 continue;
             }
@@ -1017,7 +985,6 @@ impl Deflater {
         self.match_start = self.match_start.saturating_sub(shift);
         self.prev_match = self.prev_match.saturating_sub(shift);
         self.block_start -= shift as isize;
-        self.slid += shift as u64;
         // Positions are below 2^16 and so is the shift; entries that slide
         // out become 0, "none".
         let s = shift as u32;
@@ -1035,7 +1002,6 @@ impl Deflater {
             &mut self.prev,
             &self.win,
             pos,
-            self.hash_mask,
             32 - self.hash_bits,
             self.wsize - 1,
         )
@@ -1063,10 +1029,7 @@ impl Deflater {
     /// Turns the lookahead into symbols. Without `flushing`, stops while
     /// fewer than `MIN_LOOKAHEAD` bytes wait (more input could extend a
     /// match); with it, uses everything.
-    /// With `one_block`, returns once `pending` has no room for another
-    /// block, so the caller drains it before the next (`pending` never grows,
-    /// D-064).
-    fn process(&mut self, flushing: bool, one_block: bool) {
+    fn process(&mut self, flushing: bool) {
         if self.level == 0 {
             // Blocks of exactly `chunk` bytes, so the cuts do not depend on
             // how the input arrived (D-057). A shorter block is cut only at a
@@ -1096,16 +1059,6 @@ impl Deflater {
             self.block_full();
             if used_up {
                 break;
-            }
-            // When the room left in `pending` could not take another block
-            // of the largest size (4 bytes per symbol, the fixed-code bound
-            // every block written is at most, plus the writer's slack), let
-            // the caller drain it first, so `pending` never outgrows its
-            // first allocation. Where blocks end does not change.
-            if one_block
-                && self.pending.capacity() - self.pending.len() < self.sym_cap * 4 + BLOCK_SLACK
-            {
-                return;
             }
         }
         if flushing && self.match_available {
@@ -1290,7 +1243,7 @@ impl Deflater {
                     for _ in 1..len {
                         s += 1;
                         if chained {
-                            insert_at(head, prev, win, s, HASH3, shift, wmask);
+                            insert_at(head, prev, win, s, shift, wmask);
                         } else {
                             head[hash3(load32(win, s), shift)] = s as u16;
                         }
@@ -1337,22 +1290,6 @@ impl Deflater {
         let wmask = self.wsize - 1;
         let keep = self.keep;
         let shift = 32 - self.hash_bits;
-        // Lazy levels always hash four bytes (`hash_mask`), as constants
-        // here so the loop keeps no register for them.
-        debug_assert_eq!(self.hash_mask, HASH4);
-        let mask = HASH4;
-        // A position is hashed only with all its hashed bytes in the
-        // lookahead, so no hash reads past the input (which would make the
-        // chains depend on how the input arrived).
-        let hlen = hash_len(HASH4);
-        // Kept in memory and touched only by searches longer than
-        // `CHAIN_FREE`, so it costs the short ones nothing.
-        let mut budget = Budget {
-            left: self.chain_budget,
-            earned_to: self.budget_pos,
-            base: self.slid,
-            granted: false,
-        };
         let cap = self.sym_cap;
         let mut s = self.strstart;
         let mut look = self.lookahead;
@@ -1376,9 +1313,9 @@ impl Deflater {
             }
             let mut cur = 0;
             let mut s4 = 0;
-            if look >= hlen {
+            if look >= MIN_MATCH {
                 s4 = load32(win, s);
-                let h = hash(s4, mask, shift);
+                let h = hash3(s4, shift);
                 cur = usize::from(head[h]);
                 prev[s & wmask] = head[h];
                 head[h] = s as u16;
@@ -1390,17 +1327,11 @@ impl Deflater {
                 // Search for a match longer than the one held back.
                 let max = MAX_MATCH.min(look);
                 let nice = p.nice.min(max);
-                let full = if prev_length >= p.good {
+                let mut chain = if prev_length >= p.good {
                     p.chain >> 2
                 } else {
                     p.chain
                 };
-                // The first `CHAIN_FREE` steps are free; more come from the
-                // budget, so input that keeps every chain full of short
-                // matches gets about the search ordinary data uses, not ten
-                // times more. Short walks never touch the budget.
-                let mut chain = full.min(CHAIN_FREE);
-                let mut extra = full - chain;
                 let mut best = prev_length;
                 // Candidates at or above `low` are inside the window.
                 let low = s.saturating_sub(keep).max(1);
@@ -1427,14 +1358,7 @@ impl Deflater {
                     }
                     chain -= 1;
                     if chain == 0 {
-                        if extra == 0 {
-                            break;
-                        }
-                        chain = budget.grant(s, extra);
-                        if chain == 0 {
-                            break;
-                        }
-                        extra -= chain;
+                        break;
                     }
                     let next = usize::from(prev[cur & wmask]);
                     if next >= cur || next < low {
@@ -1442,16 +1366,13 @@ impl Deflater {
                     }
                     cur = next;
                 }
-                if budget.granted {
-                    budget.refund(chain);
-                }
                 match_length = best.min(look);
                 if match_length == MIN_MATCH && s - match_start > TOO_FAR {
                     match_length = MIN_MATCH - 1;
                 }
             }
             if prev_length >= MIN_MATCH && match_length <= prev_length {
-                let max_insert = (s + look).saturating_sub(hlen);
+                let max_insert = s + look - MIN_MATCH;
                 let dist = s - 1 - prev_match;
                 syms[n] = ((dist as u32) << 16) | (prev_length - MIN_MATCH) as u32;
                 n += 1;
@@ -1461,7 +1382,7 @@ impl Deflater {
                 for _ in 0..prev_length - 2 {
                     s += 1;
                     if s <= max_insert {
-                        insert_at(head, prev, win, s, mask, shift, wmask);
+                        insert_at(head, prev, win, s, shift, wmask);
                     }
                 }
                 available = false;
@@ -1482,8 +1403,6 @@ impl Deflater {
         };
         self.strstart = s;
         self.lookahead = look;
-        self.chain_budget = budget.left;
-        self.budget_pos = budget.earned_to;
         self.nsyms = n;
         self.match_available = available;
         self.match_length = match_length;
@@ -1660,13 +1579,7 @@ impl Deflater {
             huffman::codes(&FIXED_LIT_LENS, &mut lit_codes);
             let mut dist_codes = [0u16; 30];
             huffman::codes(&[5u8; 30], &mut dist_codes);
-            self.write_symbols(
-                &lit_codes,
-                &FIXED_LIT_LENS,
-                &dist_codes,
-                &[5u8; 30],
-                fix_bits + extra,
-            );
+            self.write_symbols(&lit_codes, &FIXED_LIT_LENS, &dist_codes, &[5u8; 30]);
         } else {
             self.put(u32::from(last), 1);
             self.put(2, 2);
@@ -1697,44 +1610,27 @@ impl Deflater {
             let lit_lens = self.scratch.lit_lens;
             let dist_codes = self.scratch.dist_codes;
             let dist_lens = self.scratch.dist_lens;
-            self.write_symbols(
-                &lit_codes,
-                &lit_lens,
-                &dist_codes,
-                &dist_lens,
-                dyn_bits + extra,
-            );
+            self.write_symbols(&lit_codes, &lit_lens, &dist_codes, &dist_lens);
         }
     }
 
-    /// Writes the block's symbols and its end-of-block code; `payload_bits`
-    /// is their size under these codes (counted when the block type was
-    /// chosen, at least the true size).
     fn write_symbols(
         &mut self,
         lit_codes: &[u16],
         lit_lens: &[u8],
         dist_codes: &[u16],
         dist_lens: &[u8],
-        payload_bits: u64,
     ) {
         // The bit buffer lives in locals for the whole block. A symbol is at
         // most 48 bits (a 15-bit length code with 5 extra bits, a 15-bit
         // distance code with 13), so with at most 7 bits left over it always
         // fits in 64: each symbol is one eight-byte store into room sized
-        // for the whole block, then the whole bytes are kept (D-056). The
-        // room is the block's counted size plus the eight bytes the last
-        // store may reach past it, so `pending` never grows past the
-        // capacity it was built with (`process` stops for a drain before
-        // the room left could not take a block of 4 bytes per symbol,
-        // D-064).
+        // for the whole block, then the whole bytes are kept (D-056).
         let mut bits = self.bitbuf;
         let mut count = self.bitcnt;
         let out = &mut self.pending;
         let mut at = out.len();
-        let room =
-            usize::try_from((u64::from(count) + payload_bits).div_ceil(8)).unwrap_or(usize::MAX);
-        out.resize(at + room + 8, 0);
+        out.resize(at + 4 + (self.nsyms + 1) * 6 + 8, 0);
         let buf = &mut out[..];
         let mut flush = |bits: &mut u64, count: &mut u32, at: &mut usize| {
             buf[*at..*at + 8].copy_from_slice(&bits.to_le_bytes());
@@ -1808,90 +1704,7 @@ fn load32(win: &[u8], pos: usize) -> u32 {
 /// Hash of the low three bytes of `v` into `32 - shift` bits.
 #[inline(always)]
 fn hash3(v: u32, shift: u32) -> usize {
-    hash(v, HASH3, shift)
-}
-
-/// Hashes the bytes of `v` that `mask` keeps.
-#[inline(always)]
-fn hash(v: u32, mask: u32, shift: u32) -> usize {
-    ((v & mask).wrapping_mul(0x9E37_79B1) >> shift) as usize
-}
-
-/// The lazy search's chain budget past `CHAIN_FREE` (D-065).
-struct Budget {
-    left: i64,
-    /// Stream position up to which bytes have earned steps.
-    earned_to: u64,
-    /// Bytes the window has slid: a window position plus this is a stream
-    /// position.
-    base: u64,
-    /// This search was granted steps beyond the free ones.
-    granted: bool,
-}
-
-impl Budget {
-    /// Earns what the bytes up to window position `s` brought, then grants
-    /// up to `want` steps from the bank (0 when it is empty).
-    #[cold]
-    #[inline(never)]
-    fn grant(&mut self, s: usize, want: usize) -> usize {
-        let at = self.base + s as u64;
-        let gained = at
-            .saturating_sub(self.earned_to)
-            .saturating_mul(CHAIN_BUDGET as u64);
-        self.left = (self.left + i64::try_from(gained).unwrap_or(CHAIN_BANK)).min(CHAIN_BANK);
-        self.earned_to = at;
-        let grant = want.min(self.left.max(0) as usize);
-        self.left -= grant as i64;
-        self.granted = grant > 0;
-        grant
-    }
-
-    /// Gives back steps granted but not taken.
-    #[cold]
-    #[inline(never)]
-    fn refund(&mut self, unused: usize) {
-        self.left += unused as i64;
-        self.granted = false;
-    }
-}
-
-/// Chain steps every lazy search may take without the budget.
-const CHAIN_FREE: usize = 16;
-/// Chain steps past `CHAIN_FREE` the lazy search earns per input byte.
-/// Ordinary data uses far fewer (35 steps per byte in all for English text
-/// at level 9, under 30 for every input tried at levels 4 to 7); input built
-/// to fill every chain with short matches used 90 to 380 at levels 8 and 9
-/// (D-065).
-const CHAIN_BUDGET: i64 = 64;
-/// Most chain steps banked: one 32 KiB window's worth, so a stretch that
-/// needs long searches can still have them.
-const CHAIN_BANK: i64 = CHAIN_BUDGET * 32 * 1024;
-
-/// Room a block needs beyond 4 bytes per symbol: the block header bits,
-/// the end-of-block code, and the eight bytes the writer's last store may
-/// reach past the block.
-const BLOCK_SLACK: usize = 32;
-
-/// Three bytes hashed (levels 1 to 3).
-const HASH3: u32 = 0x00FF_FFFF;
-/// Four bytes hashed (levels 4 to 9).
-const HASH4: u32 = 0xFFFF_FFFF;
-
-/// The hash mask a level uses: four bytes where lazy matching searches
-/// chains, since a three-byte prefix is too common to tell candidates apart
-/// on binary data and a three-byte match is rarely worth it there (D-065).
-const fn hash_mask(level: u8) -> u32 {
-    if params(level).lazy_matching {
-        HASH4
-    } else {
-        HASH3
-    }
-}
-
-/// Bytes a mask hashes.
-const fn hash_len(mask: u32) -> usize {
-    if mask == HASH4 { 4 } else { MIN_MATCH }
+    ((v & 0x00FF_FFFF).wrapping_mul(0x9E37_79B1) >> shift) as usize
 }
 
 /// Inserts `pos` into the chains; returns the previous head.
@@ -1901,11 +1714,10 @@ fn insert_at(
     prev: &mut [u16],
     win: &[u8],
     pos: usize,
-    mask: u32,
     shift: u32,
     wmask: usize,
 ) -> usize {
-    let h = hash(load32(win, pos), mask, shift);
+    let h = hash3(load32(win, pos), shift);
     let old = head[h];
     prev[pos & wmask] = old;
     head[h] = pos as u16;
@@ -2006,66 +1818,6 @@ mod tests {
         let mut again = Vec::new();
         d.compress_vec(b"after", &mut again, Flush::Finish).unwrap();
         assert_eq!(crate::deflate::decompress(&again).unwrap(), b"after");
-    }
-
-    /// Memory is fixed when the engine is built: compressing never grows
-    /// it, at any level or window size, with output drained in large or tiny
-    /// pieces. (Levels 2 to 9 used to grow by a third on data with far
-    /// three-byte repeats: blocks could pile up in `pending`, each with
-    /// room for 6 bytes per symbol.)
-    #[test]
-    fn test_deflater_memory_never_grows() {
-        let mut x: u64 = 0x1234_5678_9abc_def1;
-        let mut far3 = Vec::new();
-        while far3.len() < 1 << 20 {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            far3.push(x as u8);
-            if far3.len() > 32_000 && x % 3 == 0 {
-                let at = far3.len() - 32_000 + (x as usize >> 40) % 700;
-                let rep = [far3[at], far3[at + 1], far3[at + 2]];
-                far3.extend_from_slice(&rep);
-            }
-        }
-        let random: Vec<u8> = (0..300_000u32)
-            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
-            .collect();
-        let text = b"memory stays where it was built. ".repeat(10_000);
-        for bits in [9u8, 12, 15] {
-            for level in 0..=9 {
-                for data in [&far3, &random, &text] {
-                    for out_size in [7usize, 1 << 16] {
-                        let mut d = Deflater::new(Level::new(level).unwrap())
-                            .with_window_bits(bits)
-                            .unwrap();
-                        let built = d.memory_in_use();
-                        let mut buf = vec![0u8; out_size];
-                        let mut inp = &data[..];
-                        loop {
-                            let p = d.compress(inp, &mut buf, Flush::Finish).unwrap();
-                            inp = &inp[p.consumed..];
-                            if p.status == Status::Done {
-                                break;
-                            }
-                        }
-                        assert_eq!(
-                            d.memory_in_use(),
-                            built,
-                            "level {level} bits {bits} out {out_size} input {}",
-                            data.len()
-                        );
-                    }
-                    let mut d = Deflater::new(Level::new(level).unwrap())
-                        .with_window_bits(bits)
-                        .unwrap();
-                    let built = d.memory_in_use();
-                    d.compress_vec(data, &mut Vec::new(), Flush::Finish)
-                        .unwrap();
-                    assert_eq!(d.memory_in_use(), built, "vec, level {level} bits {bits}");
-                }
-            }
-        }
     }
 
     #[test]

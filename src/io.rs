@@ -35,14 +35,10 @@ const BUF: usize = 32 * 1024;
 
 /// Decompresses while reading from a compressed source.
 ///
-/// The stream must be complete (a source that ends early is
-/// `UnexpectedEof`) and nothing may follow it: once the stream has ended,
-/// the next read looks at what is left in the buffer and, if that is empty,
-/// reads the source once more, and any byte found is refused (`InvalidData`
-/// wrapping `TrailingData`), as [`DecodeWriter`] and the one-shot functions
-/// do. [`with_trailing_data(true)`](DecodeReader::with_trailing_data) stops
-/// at the end of the stream instead and never reads past what was already
-/// buffered.
+/// Reading past the end of the compressed stream returns 0. Data after the
+/// stream is left unread in the source as far as the 32 KiB buffer allows
+/// (use [`DecodeReader::into_inner`] with care), and the stream must be complete:
+/// a source that ends early is `UnexpectedEof`.
 ///
 /// # Examples
 ///
@@ -55,12 +51,6 @@ const BUF: usize = 32 * 1024;
 /// let mut out = Vec::new();
 /// DecodeReader::new(&packed[..], Format::Zlib).read_to_end(&mut out)?;
 /// assert_eq!(out, b"read me");
-///
-/// // Bytes after the stream are refused.
-/// let mut smuggled = packed.clone();
-/// smuggled.extend_from_slice(b"GET /admin");
-/// let err = DecodeReader::new(&smuggled[..], Format::Zlib).read_to_end(&mut Vec::new()).unwrap_err();
-/// assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[derive(Debug)]
@@ -71,7 +61,6 @@ pub struct DecodeReader<R> {
     pos: usize,
     len: usize,
     eof: bool,
-    allow_trailing: bool,
 }
 
 impl<R: Read> DecodeReader<R> {
@@ -92,7 +81,6 @@ impl<R: Read> DecodeReader<R> {
             pos: 0,
             len: 0,
             eof: false,
-            allow_trailing: false,
         }
     }
 
@@ -112,33 +100,6 @@ impl<R: Read> DecodeReader<R> {
         self
     }
 
-    /// Whether bytes may follow the compressed stream (default `false`:
-    /// they are refused). With `true` the reader stops at the end of the
-    /// stream (the last gzip member, for gzip) and leaves the rest: whatever
-    /// the 32 KiB buffer already took from the source is dropped, the rest
-    /// stays in the source for [`DecodeReader::into_inner`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::io::Read;
-    ///
-    /// use compress_lib::{Format, io::DecodeReader, zlib};
-    ///
-    /// let mut framed = zlib::compress(b"body");
-    /// framed.extend_from_slice(b"next frame");
-    /// let mut out = Vec::new();
-    /// DecodeReader::new(&framed[..], Format::Zlib).with_trailing_data(true).read_to_end(&mut out)?;
-    /// assert_eq!(out, b"body");
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
-    #[must_use]
-    pub fn with_trailing_data(mut self, allow: bool) -> Self {
-        self.allow_trailing = allow;
-        self.decoder = self.decoder.with_trailing_data(allow);
-        self
-    }
-
     /// The source, consuming the reader.
     ///
     /// # Examples
@@ -153,34 +114,9 @@ impl<R: Read> DecodeReader<R> {
     }
 }
 
-impl<R: Read> DecodeReader<R> {
-    /// After the end of the stream: refuses any byte left in the buffer or,
-    /// if it is empty, still in the source (read once more to find out).
-    fn check_end(&mut self) -> io::Result<()> {
-        if self.allow_trailing {
-            return Ok(());
-        }
-        if self.pos == self.len && !self.eof {
-            self.len = self.inner.read(&mut self.buf)?;
-            self.pos = 0;
-            self.eof = self.len == 0;
-        }
-        if self.pos < self.len {
-            // The bytes stay buffered, so every later read refuses them too.
-            let at = self.decoder.total_in();
-            return Err(crate::Error::new(crate::ErrorKind::TrailingData, at).into());
-        }
-        Ok(())
-    }
-}
-
 impl<R: Read> Read for DecodeReader<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if out.is_empty() {
-            return Ok(0);
-        }
-        if self.decoder.is_done() {
-            self.check_end()?;
+        if out.is_empty() || self.decoder.is_done() {
             return Ok(0);
         }
         loop {

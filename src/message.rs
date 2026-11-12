@@ -53,7 +53,7 @@ const TAIL: [u8; 4] = [0x00, 0x00, 0xFF, 0xFF];
 /// Memory per direction: without takeover a [`Decompressor`] holds only its
 /// decode tables (about 11 KiB, no window); with takeover it adds the window
 /// (`2^window_bits` bytes). A [`Compressor`] holds a deflater sized by the
-/// window bits (338,936 bytes at 15, 30,712 at 9; see `docs/PERFORMANCE.md`).
+/// window bits (about 270 KiB at 15, under 100 KiB at 9).
 ///
 /// # Examples
 ///

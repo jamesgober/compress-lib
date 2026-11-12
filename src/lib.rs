@@ -82,7 +82,7 @@
 //!
 //! ## Status
 //!
-//! `1.1.0`, stable: no breaking change to the public API before 2.0. What
+//! `1.0.0`, stable: no breaking change to the public API before 2.0. What
 //! 1.x promises and the audit behind it are in `docs/STABILITY-1.0.md` in
 //! the [repository](https://github.com/jamesgober/compress-lib), with
 //! `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/PERFORMANCE.md`, and
