@@ -60,7 +60,7 @@ Exit: every fuzz target complete; 24 h fuzz run of the inflater targets without 
 
 ## v0.8.0 - Alpha (DONE, 2026-11-06)
 Exit: ws-net permessage-deflate on a branch passes Autobahn sections 12 and 13 strict; http-net body decode and serve-net response encode examples run; consumer issues fixed.
-- [x] The consumer paths, called as ws-net, http-net, and serve-net call them (`tests/consumers.rs`); the two issues ws-net's review of 0.6.0 found (quadratic CPU from byte-by-byte fragments, a cut-short final block accepted) are fixed in 0.7.0 (D-054), with attack tests T-5 and T-12.
+- [x] The consumer paths, called as ws-net, http-net, and serve-net call them (`tests/consumers.rs`); the two issues ws-net found in 0.6.0 (quadratic CPU from byte-by-byte fragments, a cut-short final block accepted) are fixed in 0.7.0 (D-054), with attack tests T-5 and T-12.
 - [x] Interoperation with C zlib both ways in CI (CPython's `zlib` and `gzip`).
 - Moved out (D-050): permessage-deflate inside ws-net with Autobahn sections 12 and 13 is ws-net's own milestone, built in its repository against the published `message` API; this crate's side is the RFC 7692 codec and its tests here.
 
@@ -79,15 +79,16 @@ Exit: James's go; the audit recorded in `docs/STABILITY-1.0.md`; every gap, defe
 - [x] 24 h fuzz on the final code (`inflate_raw` 151,357,523 runs, `inflate_split` 101,726,569, `roundtrip` 56,085,017; 309 million in all), no findings.
 - [x] 4 h soak on the final code: 2,098,028 rounds in 4 h 11 min of wall time, heap flat (21,318 bytes live between rounds, peak 1,745,428).
 
-## v1.1.0 - Review fixes (2026-11-12)
-Exit: every finding of the external review of 1.0 fixed or documented, each with a regression test that fails on 1.0; the fuzz targets and the soak run on the fixed code; hosted benchmarks re-run.
-- [x] F-1: the ratio cap counts every gzip member together (D-064).
-- [x] F-2: four-byte hash at levels 4 to 9 and a per-byte chain budget (D-065).
-- [x] F-3: a deflater's memory stays at its built size (D-064).
-- [x] F-4: `io::DecodeReader` refuses trailing data; `with_trailing_data` (D-064).
-- [x] F-5: `DictionaryRequired` is resumable (D-064).
-- [x] F-6 to F-8: doc figures, `wipe` and redacted `Debug` on the framing types, the gzip trailing-data rule (D-064); `gzip::Decoder::reset` fixed.
-- [ ] Fuzz and soak on the fixed code; hosted benchmarks; release.
+## v1.1.0 - Fixes and faster levels 4 to 9 (2026-11-12)
+Exit: each fix with a regression test that fails on 1.0; the fuzz targets and the soak run on the final code; hosted benchmarks re-run against 1.0.0.
+- [x] The ratio cap counts every gzip member together (D-064).
+- [x] Four-byte hash at levels 4 to 9 and a per-byte chain budget (D-065).
+- [x] A deflater's memory stays at its built size (D-064).
+- [x] `io::DecodeReader` refuses trailing data; `with_trailing_data` (D-064).
+- [x] `DictionaryRequired` is resumable (D-064).
+- [x] `wipe` and redacted `Debug` on the framing types, doc figures, the gzip trailing-data rule, `gzip::Decoder::reset` (D-064).
+- [x] Benchmarks timed against 1.0.0 in the same job (D-067).
+- [ ] 12 h fuzz and 4 h soak on the final code; release.
 
 ## After 1.1
 - 1.2: brotli decode (BR-01), feature `brotli` (D-066).

@@ -26,7 +26,7 @@ Measured, not asserted. Every number here comes from the `Bench` workflow (`.git
 | random, made at level 1 | 383 (1.07x / 0.87x) | 361 (1.02x / 1.15x) | 393 (1.09x / 0.86x) |
 | random, made at level 6 | 29,788 (1.32x / 1.07x) | 31,780 (1.24x / 1.14x) | 5,005 (0.90x / 0.92x) |
 
-On these corpora and runners, decoding is faster than miniz_oxide on every compressible row (1.10 to 2.08 times) and level with zlib-rs (0.75 to 1.17 times). Random input is stored blocks, so decoding it is a copy: 0.95 to 1.50 times miniz_oxide. An external review measured streams made by zlib-rs at level 1 (fixed-Huffman blocks) decoding at 0.81 to 0.94 times miniz_oxide on a loaded Windows machine with other corpora; the hosted runs here do not show it, and a wider fast path for fixed blocks is a 1.x candidate.
+On these corpora and runners, decoding is faster than miniz_oxide on every compressible row (1.08 to 2.15 times) and level with zlib-rs (0.84 to 1.13 times). Random input is stored blocks, so decoding it is a copy: 0.90 to 1.32 times miniz_oxide. Streams of fixed-Huffman blocks (what zlib-rs writes at level 1) can decode more slowly than miniz_oxide on some machines; a wider fast path for fixed blocks is a 1.x candidate.
 
 ## Compression
 
@@ -50,7 +50,7 @@ On these corpora and runners, decoding is faster than miniz_oxide on every compr
 
 ## Since 1.0
 
-Levels 4 to 9 hash four bytes instead of three and search within a budget of chain steps per input byte (D-065). Against 1.0.0 the bytes at levels 4 to 9 differ and are smaller on every corpus (level 6: 0.6 to 2.9 percent; level 9: up to 1.1 percent; levels 4 and 5: up to 10 percent), and the `quick` tool in the same jobs measures levels 6 and 9 at 1.09 to 2.79 times 0.9.0, whose bytes and speed at those levels are 1.0's within noise. On structured binary data level 6 went from about a quarter of zlib-rs's speed to over a third. On input crafted to keep every hash chain full, level 9 runs 3.6 to 30 times as fast as in 1.0 (1.9 to 24 MB/s locally, up from 0.4 to 0.9). Levels 0 to 3 are unchanged.
+Levels 4 to 9 hash four bytes instead of three and search within a budget of chain steps per input byte (D-065). Against 1.0.0 the bytes at levels 4 to 9 differ and are smaller on every corpus (level 6: 0.6 to 2.9 percent; level 9: up to 1.1 percent; levels 4 and 5: up to 10 percent). The `quick` tool, timing 1.1 and 1.0.0 interleaved in the same jobs, measures levels 6 and 9 at 1.1 to 2.5 times 1.0.0 on text and binary input and 1.0 to 1.5 times on JSON, and within noise of it on HTML and random input. Level 1 and decoding are within the spread a null A/B shows (1.0.0's own source timed against itself reads 0.95 to 1.14 at level 1, from code layout alone), except level 1 on macOS, which reads 0.90 to 0.96 in every build tried (D-067). On structured binary data level 6 went from about a quarter of zlib-rs's speed to over a third. On input crafted to keep every hash chain full, level 9 runs 3.6 to 30 times as fast as in 1.0 (1.9 to 24 MB/s locally, up from 0.4 to 0.9). Levels 0 to 3 are unchanged.
 
 ## Messages and gzip
 
@@ -85,12 +85,12 @@ At levels 6 and 9 the output is now smaller than C zlib's on text, JSON, HTML, a
 
 | Target | Result |
 |---|---|
-| Inflate at least 1.2 times miniz_oxide | met on text everywhere (1.38 to 2.08 times), on every macOS compressible row, and on JSON and HTML made at level 1 (1.22 to 1.90 times); 1.10 to 1.17 times on binary input and on JSON and HTML made at level 6 on Linux and Windows; random input (a copy) 0.95 to 1.50 times |
-| Inflate parity with zlib-rs (stretch) | met within noise on most rows (0.87 to 1.17 times); JSON made at level 6 on macOS 0.75 times |
-| Deflate level 1 at least 1.2 times miniz_oxide at equal or better ratio | not met on compressible input: 0.77 to 1.07 times; 1.66 to 2.21 times on random input; output 8% smaller than miniz_oxide's on text, within 2.5% on the rest |
-| Deflate level 6 at least 1.2 times miniz_oxide, ratio within 1% | met: 1.63 to 2.25 times on text, JSON, HTML, and binary, 1.24 to 1.36 on random input; output smaller than C zlib's |
-| Deflate level 9 ratio within 0.5% of zlib, speed at least miniz_oxide's | ratio met (smaller than C zlib's); speed met on text, binary, and random input (1.33 to 2.28 times) and within noise of it on JSON and HTML (0.91 to 1.12 times) |
-| Per-message compression below miniz_oxide's cost | met: 1.65 to 1.78 times miniz_oxide |
+| Inflate at least 1.2 times miniz_oxide | met on most rows and on every macOS compressible row (1.20 to 2.15 times); 1.08 to 1.17 times on binary input on Linux and on JSON, HTML, and text made at level 6 on Linux and Windows; random input (a copy) 0.90 to 1.32 times |
+| Inflate parity with zlib-rs (stretch) | met within noise (0.84 to 1.13 times) |
+| Deflate level 1 at least 1.2 times miniz_oxide at equal or better ratio | not met on compressible input: 0.70 to 0.99 times; 1.46 to 1.88 times on random input; output 8% smaller than miniz_oxide's on text, within 2.5% on the rest |
+| Deflate level 6 at least 1.2 times miniz_oxide, ratio within 1% | met: 1.51 to 1.87 times on text, JSON, HTML, and binary, 1.36 to 1.52 on random input; output smaller than C zlib's |
+| Deflate level 9 ratio within 0.5% of zlib, speed at least miniz_oxide's | ratio met (smaller than C zlib's); speed met on text, binary, and random input (1.27 to 2.25 times); JSON and HTML 0.92 to 1.08 times on Linux and Windows, 0.74 to 0.83 on macOS |
+| Per-message compression below miniz_oxide's cost | met: 1.25 to 4.34 times miniz_oxide |
 
 The gap left is level 1, level 9 on JSON and HTML, and compression against zlib-rs, which uses SIMD and `unsafe`: 0.61 to 0.85 times at level 6 on text, JSON, and HTML, 0.38 to 0.47 on binary, and 0.28 to 0.51 at level 9 on JSON and HTML (D-061). Level 1 needs a writer that codes symbols while it matches; levels 8 and 9 on JSON and HTML need a binary-tree match finder. Both are 1.x candidates; OD-1 records why `unsafe` is not the answer by default.
 

@@ -15,9 +15,8 @@
 
 ## [1.1.0] - 2026-11-12
 
-Fixes from an external review of 1.0: one medium and four low findings,
-with a regression test for each, and levels 4 to 9 compress faster and
-smaller.
+Bug fixes, two small additions, and faster, smaller compression at levels
+4 to 9. Every fix comes with a test that fails on 1.0.
 
 ### Added
 
