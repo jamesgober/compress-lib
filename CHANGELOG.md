@@ -32,9 +32,9 @@ smaller.
 
 - Levels 4 to 9 hash four bytes instead of three, and their lazy search
   works within a budget of chain steps per input byte. Against 1.0 on the
-  benchmark corpora, level 6 is up to 2.2 times as fast and up to 2.9
+  benchmark corpora, level 6 is up to 1.9 times as fast and up to 2.9
   percent smaller, level 9 up to 2.5 times as fast and up to 1.1 percent
-  smaller; on input crafted to fill every hash chain, level 9 is 3.8 to 27
+  smaller; on input crafted to fill every hash chain, level 9 is 3.6 to 30
   times as fast. Levels 0 to 3 produce the same bytes as 1.0 (bar a rare
   case at window bits 8); levels 4 to 9 produce different bytes, smaller on
   every benchmark corpus.
