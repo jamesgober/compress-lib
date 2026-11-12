@@ -70,7 +70,7 @@ Formats, in the order they ship:
 | ws-net (feature `deflate`) | `message::Compressor`, `message::Decompressor` (raw DEFLATE, sync flush, tail handling, context takeover, window bits 8 to 15), decompress-into-`Vec` with a budget per chunk | permessage-deflate (ws-net FR-40 to FR-44), unblocks the move of deflate back into ws-net's 1.x line |
 | http-net / fetch-net | `gzip`, `zlib`/`deflate` (HTTP's `deflate` coding is zlib, RFC 9110 section 8.4.1.2) streaming decoders with limits, encoders | `Content-Encoding` for request and response bodies |
 | serve-net (direct mode) | streaming encoders for responses (`gzip`, `deflate`), level and minimum-size policy | when no Apache front end compresses |
-| Hive DB, log shipping, backups | one-shot and streaming gzip | later, not driving the design |
+| databases, log shipping, backups | one-shot and streaming gzip | later, not driving the design |
 
 ### 2.2 What it uses
 
@@ -95,7 +95,7 @@ Raw DEFLATE inflate and deflate; zlib and gzip framing; CRC-32 and Adler-32 (pub
 | `Content-Encoding` negotiation, `Accept-Encoding` q-values | http-net / serve-net (parse-net lists) |
 | `Sec-WebSocket-Extensions` negotiation | ws-net |
 | zip, tar | a future archive crate on top of `deflate::Inflater` |
-| zstd, lz4, snappy | P3; a later minor of this crate if a consumer needs one (zstd is the likely first, for Hive DB) |
+| zstd, lz4, snappy | P3; a later minor of this crate if a consumer needs one (zstd is the likely first) |
 | Async (`AsyncRead`/`AsyncWrite`) | callers wrap the sans-IO engine; no async runtime in this crate |
 
 ---
