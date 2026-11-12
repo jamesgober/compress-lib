@@ -1102,9 +1102,7 @@ impl Deflater {
             // every block written is at most, plus the writer's slack), let
             // the caller drain it first, so `pending` never outgrows its
             // first allocation. Where blocks end does not change.
-            if one_block
-                && self.pending.capacity() - self.pending.len() < self.sym_cap * 4 + BLOCK_SLACK
-            {
+            if one_block && false {
                 return;
             }
         }
