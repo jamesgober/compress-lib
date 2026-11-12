@@ -1053,9 +1053,9 @@ impl Deflater {
     /// Turns the lookahead into symbols. Without `flushing`, stops while
     /// fewer than `MIN_LOOKAHEAD` bytes wait (more input could extend a
     /// match); with it, uses everything.
-    /// With `one_block`, returns once a block has been written, so the
-    /// caller drains it before the next (F-3: `pending` holds at most one
-    /// block).
+    /// With `one_block`, returns once `pending` has no room for another
+    /// block, so the caller drains it before the next (`pending` never grows,
+    /// D-064).
     fn process(&mut self, flushing: bool, one_block: bool) {
         if self.level == 0 {
             // Blocks of exactly `chunk` bytes, so the cuts do not depend on
@@ -1087,10 +1087,14 @@ impl Deflater {
             if used_up {
                 break;
             }
-            // A block ended: let the caller drain it before the next one, so
-            // `pending` holds at most one block and never outgrows its first
-            // allocation. Where blocks end does not change.
-            if one_block && !self.pending.is_empty() {
+            // When the room left in `pending` could not take another block
+            // of the largest size (4 bytes per symbol, the fixed-code bound
+            // every block written is at most, plus the writer's slack), let
+            // the caller drain it first, so `pending` never outgrows its
+            // first allocation. Where blocks end does not change.
+            if one_block
+                && self.pending.capacity() - self.pending.len() < self.sym_cap * 4 + BLOCK_SLACK
+            {
                 return;
             }
         }
@@ -1694,8 +1698,9 @@ impl Deflater {
         // for the whole block, then the whole bytes are kept (D-056). The
         // room is the block's counted size plus the eight bytes the last
         // store may reach past it, so `pending` never grows past the
-        // capacity it was built with (one block of at most 4 bytes per
-        // symbol, F-3 in D-064).
+        // capacity it was built with (`process` stops for a drain before
+        // the room left could not take a block of 4 bytes per symbol,
+        // D-064).
         let mut bits = self.bitbuf;
         let mut count = self.bitcnt;
         let out = &mut self.pending;
@@ -1795,6 +1800,11 @@ const CHAIN_BUDGET: i64 = 64;
 const CHAIN_BANK: i64 = CHAIN_BUDGET * 32 * 1024;
 /// Steps a search may take however low the budget is.
 const CHAIN_FLOOR: i64 = 8;
+
+/// Room a block needs beyond 4 bytes per symbol: the block header bits,
+/// the end-of-block code, and the eight bytes the writer's last store may
+/// reach past the block.
+const BLOCK_SLACK: usize = 32;
 
 /// Three bytes hashed (levels 1 to 3).
 const HASH3: u32 = 0x00FF_FFFF;
@@ -1934,7 +1944,7 @@ mod tests {
     /// Memory is fixed when the engine is built: compressing never grows
     /// it, at any level or window size, with output drained in large or tiny
     /// pieces. (Levels 2 to 9 used to grow by a third on data with far
-    /// three-byte repeats: several blocks could wait in `pending`, each with
+    /// three-byte repeats: blocks could pile up in `pending`, each with
     /// room for 6 bytes per symbol.)
     #[test]
     fn test_deflater_memory_never_grows() {

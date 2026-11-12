@@ -35,9 +35,9 @@ smaller.
   benchmark corpora, level 6 is up to 2.2 times as fast and up to 2.9
   percent smaller, level 9 up to 2.5 times as fast and up to 1.1 percent
   smaller; on input crafted to fill every hash chain, level 9 is 3.8 to 27
-  times as fast. Levels 0 to 3 produce the same bytes as 1.0 (at window
-  bits 12 to 15; see the memory fix below for 8 to 11); levels 4 to 9
-  produce different bytes, smaller on every benchmark corpus.
+  times as fast. Levels 0 to 3 produce the same bytes as 1.0 (bar a rare
+  case at window bits 8); levels 4 to 9 produce different bytes, smaller on
+  every benchmark corpus.
 - `Debug` for the zlib and gzip types shows a preset dictionary by length
   only, and never header fields in progress or output in waiting.
 
@@ -57,9 +57,7 @@ smaller.
   one the header names is refused with `WrongDictionary`.
 - A `Deflater` at levels 1 to 9 no longer grows past the memory it was
   built with (it could grow by a third: up to 527,416 bytes for a level-6
-  deflater built at 396,280). At window bits 8 to 11 this moves where the
-  window slides, which changes the bytes of a few incompressible blocks by
-  less than 0.2 percent.
+  deflater built at 396,280).
 - `gzip::Decoder::reset` (and so `Decoder::reset` for gzip) kept the last
   member's length, so a reset decoder refused its next stream with
   `LengthMismatch`.
