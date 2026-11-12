@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 compress-lib = { path = ".." }
 # The last release, for A/B timing in the `quick` tool.
-compress-lib-base = { package = "compress-lib", version = "=0.9.0" }
+compress-lib-base = { package = "compress-lib", version = "=1.0.0" }
 criterion = { version = "0.5", default-features = false }
 miniz_oxide = { version = "0.8", features = ["with-alloc"] }
 zlib-rs = { version = "0.6", default-features = false, features = ["rust-allocator"] }

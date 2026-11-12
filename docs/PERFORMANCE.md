@@ -9,7 +9,7 @@ Measured, not asserted. Every number here comes from the `Bench` workflow (`.git
 - Raw DEFLATE everywhere (no framing), so every library does the same work. Decoders decode streams made by zlib-rs.
 - Cells read `compress-lib MB/s (ratio to miniz_oxide / ratio to zlib-rs)`; above 1.00 means compress-lib is faster.
 - compress-lib is `#![forbid(unsafe_code)]` with no SIMD intrinsics; zlib-rs uses `unsafe` and SIMD; miniz_oxide forbids `unsafe` in its core.
-- Before criterion, the same job runs the `quick` tool (`bench-compare/src/bin/quick.rs`), which times this checkout against the last release (0.9.0) and miniz_oxide in interleaved rounds, so slow and fast moments of the shared machine fall on every side alike.
+- Before criterion, the same job runs the `quick` tool (`bench-compare/src/bin/quick.rs`), which times this checkout against the last release (1.0.0 since 1.1) and miniz_oxide in interleaved rounds, so slow and fast moments of the shared machine fall on every side alike.
 
 ## Decompression
 
