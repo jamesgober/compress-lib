@@ -413,3 +413,60 @@ fn test_framing_io_errors_surface_as_io_errors() {
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
 }
+
+/// Every decoder and encoder can be reset and reused, after a complete
+/// stream and in the middle of one. (A `gzip::Decoder` reset after a stream
+/// used to keep that stream's length and refuse the next with
+/// `LengthMismatch`.)
+#[test]
+fn test_framing_reset_and_reuse_every_format() {
+    let first = b"the first stream, long enough to span a few symbols".repeat(40);
+    let second = b"a second, different stream".to_vec();
+    for format in [Format::Raw, Format::Zlib, Format::Gzip] {
+        let packed = |data: &[u8], enc: &mut Encoder| {
+            let mut v = Vec::new();
+            enc.compress_vec(data, &mut v, Flush::Finish).unwrap();
+            v
+        };
+        let mut enc = Encoder::new(format, Level::DEFAULT);
+        let one = packed(&first, &mut enc);
+        enc.reset();
+        let two = packed(&second, &mut enc);
+        let mut fresh = Encoder::new(format, Level::DEFAULT);
+        assert_eq!(two, packed(&second, &mut fresh), "{format:?} encoder reuse");
+        // Reset in the middle of a stream, then a whole new one.
+        enc.reset();
+        enc.compress_vec(&first, &mut Vec::new(), Flush::Sync)
+            .unwrap();
+        enc.reset();
+        assert_eq!(
+            packed(&second, &mut enc),
+            two,
+            "{format:?} encoder reset mid-stream"
+        );
+
+        let mut dec = Decoder::new(format);
+        let mut out = Vec::new();
+        dec.finish_vec(&one, &mut out).unwrap();
+        assert_eq!(out, first);
+        dec.reset();
+        out.clear();
+        dec.finish_vec(&two, &mut out).unwrap();
+        assert_eq!(out, second, "{format:?} decoder reuse");
+        dec.reset();
+        dec.decompress(&one[..one.len() / 2], &mut [0u8; 64])
+            .unwrap();
+        dec.reset();
+        out.clear();
+        dec.finish_vec(&two, &mut out).unwrap();
+        assert_eq!(out, second, "{format:?} decoder reset mid-stream");
+    }
+    let mut gz = gzip::Decoder::new();
+    let mut out = Vec::new();
+    gz.finish_vec(&gzip::compress(b"hello"), &mut out).unwrap();
+    gz.reset();
+    out.clear();
+    gz.finish_vec(&gzip::compress(b"hello again"), &mut out)
+        .unwrap();
+    assert_eq!(out, b"hello again");
+}

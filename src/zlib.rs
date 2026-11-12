@@ -120,6 +120,9 @@ pub(crate) fn header_ok(cmf: u8, flg: u8) -> bool {
 enum State {
     Header,
     DictId,
+    /// The header named a dictionary that was not given: waiting for
+    /// `set_dictionary`, with the header and the id taken.
+    NeedDict,
     Body,
     Trailer,
     Done,
@@ -143,7 +146,6 @@ enum State {
 /// assert_eq!(&out[..p.produced], b"streamed");
 /// # Ok::<(), compress_lib::Error>(())
 /// ```
-#[derive(Debug)]
 pub struct Decoder {
     inflater: Inflater,
     state: State,
@@ -156,6 +158,21 @@ pub struct Decoder {
     max_window_bits: u8,
     consumed_total: u64,
     failed: Option<Error>,
+}
+
+impl core::fmt::Debug for Decoder {
+    /// The preset dictionary is shown by length only: it may be secret.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Decoder")
+            .field("inflater", &self.inflater)
+            .field("state", &self.state)
+            .field("dictionary_len", &self.dictionary.as_ref().map(Vec::len))
+            .field("dictionary_id", &self.dictionary_id)
+            .field("max_window_bits", &self.max_window_bits)
+            .field("total_in", &self.consumed_total)
+            .field("failed", &self.failed)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for Decoder {
@@ -242,9 +259,19 @@ impl Decoder {
     /// used only when the header asks for it, and only if its Adler-32
     /// matches the header's dictionary id.
     ///
+    /// It can be given before the stream, or after a call returned
+    /// [`ErrorKind::DictionaryRequired`]: that error does not fail the
+    /// decoder. It has taken the header and the dictionary id
+    /// ([`dictionary_id`](Decoder::dictionary_id) says which dictionary),
+    /// and the error's [`offset`](Error::offset) is the number of stream
+    /// bytes taken, so the next call continues with the input from there.
+    ///
     /// # Errors
     ///
-    /// [`ErrorKind::InvalidState`] after the body has started.
+    /// [`ErrorKind::InvalidState`] after the body has started;
+    /// [`ErrorKind::WrongDictionary`] after `DictionaryRequired` when the
+    /// dictionary is not the one the header names (the decoder keeps
+    /// waiting for the right one).
     ///
     /// # Examples
     ///
@@ -262,11 +289,24 @@ impl Decoder {
     /// let mut out = Vec::new();
     /// dec.finish_vec(&packed, &mut out)?;
     /// assert_eq!(out, b"hello world");
+    ///
+    /// // Or look the dictionary up by the id the stream names, then go on.
+    /// let mut dec = zlib::Decoder::new();
+    /// let mut out = Vec::new();
+    /// let err = dec.finish_vec(&packed, &mut out).unwrap_err();
+    /// assert_eq!(err.kind(), compress_lib::ErrorKind::DictionaryRequired);
+    /// assert_eq!(dec.dictionary_id(), Some(compress_lib::checksum::adler32(dict)));
+    /// dec.set_dictionary(dict)?;
+    /// dec.finish_vec(&packed[err.offset() as usize..], &mut out)?;
+    /// assert_eq!(out, b"hello world");
     /// # Ok::<(), compress_lib::Error>(())
     /// ```
     pub fn set_dictionary(&mut self, dictionary: &[u8]) -> Result<(), Error> {
-        if !matches!(self.state, State::Header | State::DictId) {
+        if !matches!(self.state, State::Header | State::DictId | State::NeedDict) {
             return Err(Error::config(ErrorKind::InvalidState));
+        }
+        if self.state == State::NeedDict && Some(adler32(dictionary)) != self.dictionary_id {
+            return Err(Error::config(ErrorKind::WrongDictionary));
         }
         let mut stored = Vec::new();
         if stored.try_reserve_exact(dictionary.len()).is_err() {
@@ -369,6 +409,36 @@ impl Decoder {
         self.dictionary_id = None;
         self.consumed_total = 0;
         self.failed = None;
+    }
+
+    /// Zeroes the window, the decode tables, and the preset dictionary
+    /// (which is dropped: unlike [`reset`](Decoder::reset), `wipe` forgets
+    /// it), then resets the decoder. For connections that carried secrets.
+    ///
+    /// The zeroing goes through [`core::hint::black_box`]; see
+    /// [`Inflater::wipe`](crate::deflate::Inflater::wipe) for what that can
+    /// promise without `unsafe`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::zlib;
+    ///
+    /// let mut dec = zlib::Decoder::new();
+    /// dec.set_dictionary(b"secret words")?;
+    /// dec.finish_vec(&zlib::compress(b"token"), &mut Vec::new())?;
+    /// dec.wipe();
+    /// assert_eq!(dec.total_out(), 0);
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    pub fn wipe(&mut self) {
+        self.inflater.wipe();
+        if let Some(dict) = &mut self.dictionary {
+            crate::wipe_vec(dict);
+        }
+        self.dictionary = None;
+        self.held = [0; 4];
+        self.reset();
     }
 
     /// Heap bytes held.
@@ -486,6 +556,19 @@ impl Decoder {
         let mut produced = 0;
         let status = loop {
             match self.state {
+                State::NeedDict => {
+                    let Some(dict) = &self.dictionary else {
+                        // Not a failure: the caller can still give it.
+                        self.consumed_total += ip as u64;
+                        return Err(Error::new(
+                            ErrorKind::DictionaryRequired,
+                            self.consumed_total,
+                        ));
+                    };
+                    // `set_dictionary` checked it against the id.
+                    self.inflater.set_dictionary(dict)?;
+                    self.state = State::Body;
+                }
                 State::Header | State::DictId | State::Trailer => {
                     let need = if self.state == State::Header { 2 } else { 4 };
                     while self.held_len < need && ip < input.len() {
@@ -498,6 +581,9 @@ impl Decoder {
                     }
                     self.held_len = 0;
                     if let Err(kind) = self.on_field() {
+                        if self.state == State::NeedDict {
+                            continue;
+                        }
                         return Err(self.fail(kind, ip));
                     }
                 }
@@ -564,6 +650,7 @@ impl Decoder {
                 let id = u32::from_be_bytes(self.held);
                 self.dictionary_id = Some(id);
                 let Some(dict) = &self.dictionary else {
+                    self.state = State::NeedDict;
                     return Err(ErrorKind::DictionaryRequired);
                 };
                 if adler32(dict) != id {
@@ -578,7 +665,7 @@ impl Decoder {
                 }
                 self.state = State::Done;
             }
-            State::Body | State::Done => {}
+            State::NeedDict | State::Body | State::Done => {}
         }
         Ok(())
     }
@@ -604,7 +691,6 @@ pub(crate) enum Sink<'a> {
 /// assert_eq!(zlib::decompress(&packed)?, b"part one, part two");
 /// # Ok::<(), compress_lib::Error>(())
 /// ```
-#[derive(Debug)]
 pub struct Encoder {
     deflater: Deflater,
     adler: Adler32,
@@ -615,6 +701,19 @@ pub struct Encoder {
     pending_len: usize,
     header_written: bool,
     trailer_written: bool,
+}
+
+impl core::fmt::Debug for Encoder {
+    /// The header and trailer bytes in waiting (the trailer is a checksum
+    /// of the plaintext) are not shown.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Encoder")
+            .field("deflater", &self.deflater)
+            .field("dictionary_id", &self.dictionary_id)
+            .field("header_written", &self.header_written)
+            .field("trailer_written", &self.trailer_written)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for Encoder {
@@ -708,6 +807,32 @@ impl Encoder {
         self.pending_len = 0;
         self.header_written = false;
         self.trailer_written = false;
+    }
+
+    /// Zeroes the window, hash chains, and buffers (they hold plaintext and
+    /// any preset dictionary), then resets the encoder. For connections that
+    /// carried secrets.
+    ///
+    /// The zeroing goes through [`core::hint::black_box`]; see
+    /// [`Inflater::wipe`](crate::deflate::Inflater::wipe) for what that can
+    /// promise without `unsafe`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use compress_lib::{Level, deflate::Flush, zlib};
+    ///
+    /// let mut enc = zlib::Encoder::new(Level::DEFAULT);
+    /// enc.compress_vec(b"token=secret", &mut Vec::new(), Flush::Finish)?;
+    /// enc.wipe();
+    /// assert_eq!(enc.total_in(), 0);
+    /// # Ok::<(), compress_lib::Error>(())
+    /// ```
+    pub fn wipe(&mut self) {
+        self.deflater.wipe();
+        self.pending = [0; 6];
+        core::hint::black_box(&self.pending);
+        self.reset();
     }
 
     /// Uncompressed bytes taken.
@@ -957,6 +1082,73 @@ mod tests {
         dec.finish_vec(&packed, &mut out).unwrap();
         assert_eq!(out, b"the dictionary again");
         assert_eq!(dec.dictionary_id(), Some(adler32(b"the dictionary")));
+    }
+
+    /// `DictionaryRequired` is not a failure: the caller reads the id, gives
+    /// the dictionary, and goes on from the error's offset, in one piece or
+    /// byte by byte. A wrong dictionary is refused and the decoder keeps
+    /// waiting. (It used to be sticky, and `set_dictionary` returned `Ok`
+    /// without effect.)
+    #[test]
+    fn test_zlib_dictionary_required_then_continue() {
+        let dict = b"the dictionary";
+        let data = b"the dictionary, then the dictionary once more";
+        let mut enc = Encoder::new(Level::BEST);
+        enc.set_dictionary(dict).unwrap();
+        let mut packed = Vec::new();
+        enc.compress_vec(data, &mut packed, Flush::Finish).unwrap();
+
+        let mut dec = Decoder::new();
+        let mut out = Vec::new();
+        let err = dec.finish_vec(&packed, &mut out).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DictionaryRequired);
+        assert_eq!(err.offset(), 6, "header and id taken");
+        assert_eq!(dec.dictionary_id(), Some(adler32(dict)));
+        // Asking again without a dictionary gives the same answer.
+        assert_eq!(
+            dec.finish_vec(&packed[6..], &mut out).unwrap_err().kind(),
+            ErrorKind::DictionaryRequired
+        );
+        assert_eq!(
+            dec.set_dictionary(b"not it").unwrap_err().kind(),
+            ErrorKind::WrongDictionary
+        );
+        dec.set_dictionary(dict).unwrap();
+        let p = dec.finish_vec(&packed[6..], &mut out).unwrap();
+        assert_eq!(p.status, Status::Done);
+        assert_eq!(out, data);
+
+        // Byte by byte through the slice API.
+        let mut dec = Decoder::new();
+        let mut out = Vec::new();
+        let mut buf = [0u8; 3];
+        let mut pos = 0;
+        while pos < packed.len() {
+            let last = pos + 1 == packed.len();
+            let piece = &packed[pos..=pos];
+            let r = if last {
+                dec.finish(piece, &mut buf)
+            } else {
+                dec.decompress(piece, &mut buf)
+            };
+            match r {
+                Ok(p) => {
+                    out.extend_from_slice(&buf[..p.produced]);
+                    pos += p.consumed;
+                    if p.status == Status::Done {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    assert_eq!(e.kind(), ErrorKind::DictionaryRequired);
+                    assert_eq!(e.offset(), 6);
+                    dec.set_dictionary(dict).unwrap();
+                    pos = 6;
+                }
+            }
+        }
+        assert_eq!(out, data);
+        assert!(dec.is_done());
     }
 
     #[test]

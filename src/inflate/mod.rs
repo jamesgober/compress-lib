@@ -97,6 +97,11 @@ pub struct Inflater {
     bitcnt: u32,
     total_in: u64,
     total_out: u64,
+    /// Bytes taken and produced before this stream by the container that
+    /// owns the inflater (earlier gzip members), so `max_ratio` and its floor
+    /// apply to the whole container stream.
+    ratio_base_in: u64,
+    ratio_base_out: u64,
     failed: Option<Error>,
     hlit: u16,
     hdist: u16,
@@ -183,6 +188,8 @@ impl Inflater {
             bitcnt: 0,
             total_in: 0,
             total_out: 0,
+            ratio_base_in: 0,
+            ratio_base_out: 0,
             failed: None,
             hlit: 0,
             hdist: 0,
@@ -362,6 +369,8 @@ impl Inflater {
         self.bitcnt = 0;
         self.total_in = 0;
         self.total_out = 0;
+        self.ratio_base_in = 0;
+        self.ratio_base_out = 0;
         self.failed = None;
         self.wpos = 0;
         self.whave = 0;
@@ -621,6 +630,15 @@ impl Inflater {
         self.limits = self.limits.with_max_output(max);
     }
 
+    /// Counts `taken` input and `produced` output bytes from before this
+    /// stream (earlier members of the same gzip stream) towards the ratio
+    /// bound, so the ratio and its floor cover the container as a whole.
+    /// Cleared by [`Inflater::reset`].
+    pub(crate) fn set_ratio_base(&mut self, taken: u64, produced: u64) {
+        self.ratio_base_in = taken;
+        self.ratio_base_out = produced;
+    }
+
     fn run_vec_from(
         &mut self,
         input: &[u8],
@@ -738,11 +756,12 @@ impl Inflater {
                     .min(buf.len() - op);
             let mut end = cap_end;
             if self.limits.max_ratio() != 0 {
-                let taken = self.total_in + ip as u64;
+                let taken = self.ratio_base_in + self.total_in + ip as u64;
                 let allowed = taken
                     .saturating_mul(u64::from(self.limits.max_ratio()))
                     .max(self.limits.ratio_floor());
-                let ratio_room = allowed.saturating_sub(self.total_out + (op - op_start) as u64);
+                let ratio_room = allowed
+                    .saturating_sub(self.ratio_base_out + self.total_out + (op - op_start) as u64);
                 end = end.min(op + usize::try_from(ratio_room).unwrap_or(usize::MAX));
             }
             let before = (ip, op);

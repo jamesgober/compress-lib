@@ -1060,6 +1060,12 @@ impl Deflater {
             if used_up {
                 break;
             }
+            // A block ended: let the caller drain it before the next one, so
+            // `pending` holds at most one block and never outgrows its first
+            // allocation. Where blocks end does not change.
+            if !self.pending.is_empty() {
+                return;
+            }
         }
         if flushing && self.match_available {
             self.literal(self.win[self.strstart - 1]);
@@ -1579,7 +1585,13 @@ impl Deflater {
             huffman::codes(&FIXED_LIT_LENS, &mut lit_codes);
             let mut dist_codes = [0u16; 30];
             huffman::codes(&[5u8; 30], &mut dist_codes);
-            self.write_symbols(&lit_codes, &FIXED_LIT_LENS, &dist_codes, &[5u8; 30]);
+            self.write_symbols(
+                &lit_codes,
+                &FIXED_LIT_LENS,
+                &dist_codes,
+                &[5u8; 30],
+                fix_bits + extra,
+            );
         } else {
             self.put(u32::from(last), 1);
             self.put(2, 2);
@@ -1610,27 +1622,43 @@ impl Deflater {
             let lit_lens = self.scratch.lit_lens;
             let dist_codes = self.scratch.dist_codes;
             let dist_lens = self.scratch.dist_lens;
-            self.write_symbols(&lit_codes, &lit_lens, &dist_codes, &dist_lens);
+            self.write_symbols(
+                &lit_codes,
+                &lit_lens,
+                &dist_codes,
+                &dist_lens,
+                dyn_bits + extra,
+            );
         }
     }
 
+    /// Writes the block's symbols and its end-of-block code; `payload_bits`
+    /// is their size under these codes (counted when the block type was
+    /// chosen, at least the true size).
     fn write_symbols(
         &mut self,
         lit_codes: &[u16],
         lit_lens: &[u8],
         dist_codes: &[u16],
         dist_lens: &[u8],
+        payload_bits: u64,
     ) {
         // The bit buffer lives in locals for the whole block. A symbol is at
         // most 48 bits (a 15-bit length code with 5 extra bits, a 15-bit
         // distance code with 13), so with at most 7 bits left over it always
         // fits in 64: each symbol is one eight-byte store into room sized
-        // for the whole block, then the whole bytes are kept (D-056).
+        // for the whole block, then the whole bytes are kept (D-056). The
+        // room is the block's counted size plus the eight bytes the last
+        // store may reach past it, so `pending` never grows past the
+        // capacity it was built with (one block of at most 4 bytes per
+        // symbol, F-3 in D-064).
         let mut bits = self.bitbuf;
         let mut count = self.bitcnt;
         let out = &mut self.pending;
         let mut at = out.len();
-        out.resize(at + 4 + (self.nsyms + 1) * 6 + 8, 0);
+        let room =
+            usize::try_from((u64::from(count) + payload_bits).div_ceil(8)).unwrap_or(usize::MAX);
+        out.resize(at + room + 8, 0);
         let buf = &mut out[..];
         let mut flush = |bits: &mut u64, count: &mut u32, at: &mut usize| {
             buf[*at..*at + 8].copy_from_slice(&bits.to_le_bytes());
@@ -1818,6 +1846,66 @@ mod tests {
         let mut again = Vec::new();
         d.compress_vec(b"after", &mut again, Flush::Finish).unwrap();
         assert_eq!(crate::deflate::decompress(&again).unwrap(), b"after");
+    }
+
+    /// Memory is fixed when the engine is built: compressing never grows
+    /// it, at any level or window size, with output drained in large or tiny
+    /// pieces. (Levels 2 to 9 used to grow by a third on data with far
+    /// three-byte repeats: several blocks could wait in `pending`, each with
+    /// room for 6 bytes per symbol.)
+    #[test]
+    fn test_deflater_memory_never_grows() {
+        let mut x: u64 = 0x1234_5678_9abc_def1;
+        let mut far3 = Vec::new();
+        while far3.len() < 1 << 20 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            far3.push(x as u8);
+            if far3.len() > 32_000 && x % 3 == 0 {
+                let at = far3.len() - 32_000 + (x as usize >> 40) % 700;
+                let rep = [far3[at], far3[at + 1], far3[at + 2]];
+                far3.extend_from_slice(&rep);
+            }
+        }
+        let random: Vec<u8> = (0..300_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let text = b"memory stays where it was built. ".repeat(10_000);
+        for bits in [9u8, 12, 15] {
+            for level in 0..=9 {
+                for data in [&far3, &random, &text] {
+                    for out_size in [7usize, 1 << 16] {
+                        let mut d = Deflater::new(Level::new(level).unwrap())
+                            .with_window_bits(bits)
+                            .unwrap();
+                        let built = d.memory_in_use();
+                        let mut buf = vec![0u8; out_size];
+                        let mut inp = &data[..];
+                        loop {
+                            let p = d.compress(inp, &mut buf, Flush::Finish).unwrap();
+                            inp = &inp[p.consumed..];
+                            if p.status == Status::Done {
+                                break;
+                            }
+                        }
+                        assert_eq!(
+                            d.memory_in_use(),
+                            built,
+                            "level {level} bits {bits} out {out_size} input {}",
+                            data.len()
+                        );
+                    }
+                    let mut d = Deflater::new(Level::new(level).unwrap())
+                        .with_window_bits(bits)
+                        .unwrap();
+                    let built = d.memory_in_use();
+                    d.compress_vec(data, &mut Vec::new(), Flush::Finish)
+                        .unwrap();
+                    assert_eq!(d.memory_in_use(), built, "vec, level {level} bits {bits}");
+                }
+            }
+        }
     }
 
     #[test]

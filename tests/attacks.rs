@@ -125,6 +125,65 @@ fn test_attack_t2_ratio_bomb_caught_by_ratio_cap() {
     );
 }
 
+/// T-2 across gzip members: the ratio and its floor count the whole stream,
+/// so a bomb split into members that each stay under the floor is still
+/// refused (each member used to start the count again).
+#[test]
+fn test_attack_t2_ratio_bomb_across_gzip_members() {
+    let member = gzip::compress(&vec![0u8; 1_000_000]);
+    let wire: Vec<u8> = member
+        .iter()
+        .copied()
+        .cycle()
+        .take(member.len() * 60)
+        .collect();
+    let limits = Limits::new().with_max_output(64 << 20).with_max_ratio(50);
+    // One member of the same total is refused, and so are sixty.
+    assert_eq!(
+        gzip::decompress_with(&gzip::compress(&vec![0u8; 60_000_000]), limits)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::RatioLimit
+    );
+    let err = gzip::decompress_with(&wire, limits).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::RatioLimit);
+    // Refused once the whole stream passes the bound: past the 1 MiB floor
+    // and 50 times the input taken, long before the 60 MB the members hold.
+    assert!(err.offset() < (member.len() * 3) as u64, "{err:?}");
+    // The streaming decoder, fed in pieces, stops the same way.
+    let mut dec = gzip::Decoder::new().with_limits(limits);
+    let mut out = vec![0u8; 1 << 16];
+    let mut kind = None;
+    'feed: for piece in wire.chunks(777) {
+        let mut rest = piece;
+        loop {
+            match dec.decompress(rest, &mut out) {
+                Ok(p) => {
+                    rest = &rest[p.consumed..];
+                    if rest.is_empty() && p.produced < out.len() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    kind = Some(e.kind());
+                    break 'feed;
+                }
+            }
+        }
+    }
+    assert_eq!(kind, Some(ErrorKind::RatioLimit));
+    // Members of ordinary text under the same limits still pass.
+    let mut x = 5u32;
+    let text: Vec<u8> = (0..300_000)
+        .map(|_| b"etaoin shrdlu\n"[(next(&mut x) % 14) as usize])
+        .collect();
+    let mut many = Vec::new();
+    for part in text.chunks(10_000) {
+        many.extend_from_slice(&gzip::compress(part));
+    }
+    assert_eq!(gzip::decompress_with(&many, limits).unwrap(), text);
+}
+
 /// T-3: malformed Huffman descriptions are refused, never misread.
 #[test]
 fn test_attack_t3_malformed_tables_refused() {
@@ -558,6 +617,61 @@ fn test_attack_t13_trailing_data_refused() {
     );
 }
 
+/// T-13 through `io::DecodeReader`: bytes after a raw, zlib, or gzip stream
+/// are refused whether they are already in the reader's buffer or still in
+/// the source (the reader used to stop at the end of a raw or zlib stream
+/// and drop them).
+#[cfg(feature = "std")]
+#[test]
+fn test_attack_t13_trailing_data_refused_by_decode_reader() {
+    use std::io::Read;
+
+    use compress_lib::{Format, io::DecodeReader};
+
+    let small = b"body".to_vec();
+    // Incompressible, so the stream is longer than the 32 KiB buffer and the
+    // tail arrives in a later read of the source.
+    let mut x = 3u32;
+    let big: Vec<u8> = (0..100_000).map(|_| next(&mut x) as u8).collect();
+    for data in [&small, &big] {
+        for format in [Format::Raw, Format::Zlib, Format::Gzip] {
+            let mut packed = Vec::new();
+            compress_lib::Encoder::new(format, Level::DEFAULT)
+                .compress_vec(data, &mut packed, Flush::Finish)
+                .unwrap();
+            let clean = packed.clone();
+            let mut out = Vec::new();
+            DecodeReader::new(&clean[..], format)
+                .read_to_end(&mut out)
+                .unwrap();
+            assert_eq!(&out, data, "{format:?}");
+            packed.extend_from_slice(b"SMUGGLED");
+            let err = DecodeReader::new(&packed[..], format)
+                .read_to_end(&mut Vec::new())
+                .unwrap_err();
+            assert_eq!(
+                err.kind(),
+                std::io::ErrorKind::InvalidData,
+                "{format:?} {}",
+                data.len()
+            );
+            let inner = err
+                .into_inner()
+                .unwrap()
+                .downcast::<compress_lib::Error>()
+                .unwrap();
+            assert_eq!(inner.kind(), ErrorKind::TrailingData, "{format:?}");
+            // Allowed on request: the stream decodes and the rest is left.
+            let mut out = Vec::new();
+            DecodeReader::new(&packed[..], format)
+                .with_trailing_data(true)
+                .read_to_end(&mut out)
+                .unwrap();
+            assert_eq!(&out, data, "{format:?} with trailing data allowed");
+        }
+    }
+}
+
 /// T-14: input built to make the match finder work hardest stays bounded.
 #[test]
 fn test_attack_t14_adversarial_encoder_input_bounded() {
@@ -636,4 +750,75 @@ fn test_attack_wipe_leaves_no_plaintext() {
     i.decompress_vec(&packed, &mut Vec::new()).unwrap();
     i.wipe();
     assert_eq!((d.total_in(), i.total_out()), (0, 0));
+}
+
+/// T-15 for the framing types: `wipe` on the zlib and gzip encoders and
+/// decoders (and the format-generic ones) forgets the history, and `Debug`
+/// never prints a preset dictionary or header fields in progress.
+#[test]
+fn test_attack_wipe_and_debug_on_framing_types() {
+    let secret = b"session=4f9a2c7e1b; password=correct horse battery staple";
+    // A wiped encoder with history compresses the next stream as a fresh
+    // one does.
+    let fresh = |format| {
+        let mut v = Vec::new();
+        compress_lib::Encoder::new(format, Level::DEFAULT)
+            .compress_vec(secret, &mut v, Flush::Finish)
+            .unwrap();
+        v
+    };
+    for format in [
+        compress_lib::Format::Raw,
+        compress_lib::Format::Zlib,
+        compress_lib::Format::Gzip,
+    ] {
+        let mut enc = compress_lib::Encoder::new(format, Level::DEFAULT);
+        enc.compress_vec(secret, &mut Vec::new(), Flush::Sync)
+            .unwrap();
+        enc.wipe();
+        let mut again = Vec::new();
+        enc.compress_vec(secret, &mut again, Flush::Finish).unwrap();
+        assert_eq!(again, fresh(format), "{format:?}");
+        let mut dec = compress_lib::Decoder::new(format);
+        let mut out = Vec::new();
+        dec.finish_vec(&again, &mut out).unwrap();
+        dec.wipe();
+        assert_eq!(dec.total_out(), 0);
+        dec.finish_vec(&again, &mut out).unwrap();
+    }
+    let mut zenc = zlib::Encoder::new(Level::DEFAULT);
+    zenc.compress_vec(secret, &mut Vec::new(), Flush::Sync)
+        .unwrap();
+    zenc.wipe();
+    let mut genc = gzip::Encoder::new(Level::DEFAULT);
+    genc.compress_vec(secret, &mut Vec::new(), Flush::Sync)
+        .unwrap();
+    genc.wipe();
+    assert_eq!((zenc.total_in(), genc.total_in()), (0, 0));
+
+    // Debug: the dictionary by length only, never its bytes.
+    let dict = b"DICTIONARY-SECRET-0123456789";
+    let mut zdec = zlib::Decoder::new();
+    zdec.set_dictionary(dict).unwrap();
+    let shown = format!("{zdec:?}");
+    let as_list = format!("{:?}", &dict[..4]);
+    assert!(!shown.contains(&as_list[1..as_list.len() - 1]), "{shown}");
+    assert!(shown.contains("dictionary_len: Some(28)"), "{shown}");
+    zdec.wipe();
+    assert!(format!("{zdec:?}").contains("dictionary_len: None"));
+    // A gzip header cut inside its name: the name read so far is not shown.
+    let mut named = Vec::new();
+    gzip::Encoder::new(Level::DEFAULT)
+        .with_header(gzip::GzipHeader::new().with_name(b"SECRETNAME"))
+        .compress_vec(b"x", &mut named, Flush::Finish)
+        .unwrap();
+    let mut gdec = gzip::Decoder::new();
+    gdec.decompress(&named[..15], &mut [0u8; 8]).unwrap();
+    let shown = format!("{gdec:?}");
+    let name_list = format!("{:?}", &b"SECRET"[..]);
+    assert!(
+        !shown.contains(&name_list[1..name_list.len() - 1]),
+        "{shown}"
+    );
+    assert!(!shown.contains("SECRET"), "{shown}");
 }
