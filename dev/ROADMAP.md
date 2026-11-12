@@ -79,7 +79,7 @@ Exit: James's go; the audit recorded in `docs/STABILITY-1.0.md`; every gap, defe
 - [x] 24 h fuzz on the final code (`inflate_raw` 151,357,523 runs, `inflate_split` 101,726,569, `roundtrip` 56,085,017; 309 million in all), no findings.
 - [x] 4 h soak on the final code: 2,098,028 rounds in 4 h 11 min of wall time, heap flat (21,318 bytes live between rounds, peak 1,745,428).
 
-## v1.1.0 - Fixes and faster levels 4 to 9 (2026-11-12)
+## v1.1.0 - Fixes and faster levels 4 to 9 (DONE, 2026-11-12)
 Exit: each fix with a regression test that fails on 1.0; the fuzz targets and the soak run on the final code; hosted benchmarks re-run against 1.0.0.
 - [x] The ratio cap counts every gzip member together (D-064).
 - [x] Four-byte hash at levels 4 to 9 and a per-byte chain budget (D-065).
@@ -88,7 +88,8 @@ Exit: each fix with a regression test that fails on 1.0; the fuzz targets and th
 - [x] `DictionaryRequired` is resumable (D-064).
 - [x] `wipe` and redacted `Debug` on the framing types, doc figures, the gzip trailing-data rule, `gzip::Decoder::reset` (D-064).
 - [x] Benchmarks timed against 1.0.0 in the same job (D-067).
-- [ ] 12 h fuzz and 4 h soak on the final code; release.
+- [x] 12 h fuzz of all five targets on the final code (269 million runs), no findings.
+- [x] 4 h soak on the final code: 2,739,425 rounds in 4 h 23 min of wall time, heap flat.
 
 ## After 1.1
 - 1.2: brotli decode (BR-01), feature `brotli` (D-066).
