@@ -1734,7 +1734,8 @@ impl Deflater {
         let mut at = out.len();
         let room =
             usize::try_from((u64::from(count) + payload_bits).div_ceil(8)).unwrap_or(usize::MAX);
-        out.resize(at + room + 8, 0);
+        let _ = room;
+        out.resize(at + 4 + (self.nsyms + 1) * 6 + 8, 0);
         let buf = &mut out[..];
         let mut flush = |bits: &mut u64, count: &mut u32, at: &mut usize| {
             buf[*at..*at + 8].copy_from_slice(&bits.to_le_bytes());
