@@ -1337,14 +1337,22 @@ impl Deflater {
         let wmask = self.wsize - 1;
         let keep = self.keep;
         let shift = 32 - self.hash_bits;
-        let mask = self.hash_mask;
+        // Lazy levels always hash four bytes (`hash_mask`), as constants
+        // here so the loop keeps no register for them.
+        debug_assert_eq!(self.hash_mask, HASH4);
+        let mask = HASH4;
         // A position is hashed only with all its hashed bytes in the
         // lookahead, so no hash reads past the input (which would make the
         // chains depend on how the input arrived).
-        let hlen = hash_len(mask);
-        let mut budget = self.chain_budget;
-        let mut earned_to = self.budget_pos;
-        let base = self.slid;
+        let hlen = hash_len(HASH4);
+        // Kept in memory and touched only by searches longer than
+        // `CHAIN_FREE`, so it costs the short ones nothing.
+        let mut budget = Budget {
+            left: self.chain_budget,
+            earned_to: self.budget_pos,
+            base: self.slid,
+            granted: false,
+        };
         let cap = self.sym_cap;
         let mut s = self.strstart;
         let mut look = self.lookahead;
@@ -1393,7 +1401,6 @@ impl Deflater {
                 // times more. Short walks never touch the budget.
                 let mut chain = full.min(CHAIN_FREE);
                 let mut extra = full - chain;
-                let mut granted = false;
                 let mut best = prev_length;
                 // Candidates at or above `low` are inside the window.
                 let low = s.saturating_sub(keep).max(1);
@@ -1423,23 +1430,11 @@ impl Deflater {
                         if extra == 0 {
                             break;
                         }
-                        // Earn what the bytes since the last long walk
-                        // brought, then take what the bank allows.
-                        let at = base + s as u64;
-                        let gained = at
-                            .saturating_sub(earned_to)
-                            .saturating_mul(CHAIN_BUDGET as u64);
-                        budget =
-                            (budget + i64::try_from(gained).unwrap_or(CHAIN_BANK)).min(CHAIN_BANK);
-                        earned_to = at;
-                        let grant = extra.min(budget.max(0) as usize);
-                        if grant == 0 {
+                        chain = budget.grant(s, extra);
+                        if chain == 0 {
                             break;
                         }
-                        budget -= grant as i64;
-                        extra -= grant;
-                        chain = grant;
-                        granted = true;
+                        extra -= chain;
                     }
                     let next = usize::from(prev[cur & wmask]);
                     if next >= cur || next < low {
@@ -1447,9 +1442,8 @@ impl Deflater {
                     }
                     cur = next;
                 }
-                if granted {
-                    // Steps granted but not taken go back.
-                    budget += chain as i64;
+                if budget.granted {
+                    budget.refund(chain);
                 }
                 match_length = best.min(look);
                 if match_length == MIN_MATCH && s - match_start > TOO_FAR {
@@ -1488,8 +1482,8 @@ impl Deflater {
         };
         self.strstart = s;
         self.lookahead = look;
-        self.chain_budget = budget;
-        self.budget_pos = earned_to;
+        self.chain_budget = budget.left;
+        self.budget_pos = budget.earned_to;
         self.nsyms = n;
         self.match_available = available;
         self.match_length = match_length;
@@ -1821,6 +1815,45 @@ fn hash3(v: u32, shift: u32) -> usize {
 #[inline(always)]
 fn hash(v: u32, mask: u32, shift: u32) -> usize {
     ((v & mask).wrapping_mul(0x9E37_79B1) >> shift) as usize
+}
+
+/// The lazy search's chain budget past `CHAIN_FREE` (D-065).
+struct Budget {
+    left: i64,
+    /// Stream position up to which bytes have earned steps.
+    earned_to: u64,
+    /// Bytes the window has slid: a window position plus this is a stream
+    /// position.
+    base: u64,
+    /// This search was granted steps beyond the free ones.
+    granted: bool,
+}
+
+impl Budget {
+    /// Earns what the bytes up to window position `s` brought, then grants
+    /// up to `want` steps from the bank (0 when it is empty).
+    #[cold]
+    #[inline(never)]
+    fn grant(&mut self, s: usize, want: usize) -> usize {
+        let at = self.base + s as u64;
+        let gained = at
+            .saturating_sub(self.earned_to)
+            .saturating_mul(CHAIN_BUDGET as u64);
+        self.left = (self.left + i64::try_from(gained).unwrap_or(CHAIN_BANK)).min(CHAIN_BANK);
+        self.earned_to = at;
+        let grant = want.min(self.left.max(0) as usize);
+        self.left -= grant as i64;
+        self.granted = grant > 0;
+        grant
+    }
+
+    /// Gives back steps granted but not taken.
+    #[cold]
+    #[inline(never)]
+    fn refund(&mut self, unused: usize) {
+        self.left += unused as i64;
+        self.granted = false;
+    }
 }
 
 /// Chain steps every lazy search may take without the budget.
