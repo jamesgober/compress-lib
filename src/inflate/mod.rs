@@ -536,6 +536,11 @@ impl Inflater {
     /// times `max_output` while a reallocation holds the old buffer and the
     /// new one. Returns `NeedsInput` or `Done`.
     ///
+    /// Without `unsafe` the new room is zero-filled before it is decoded
+    /// into, which costs a few percent; for the most throughput, decode with
+    /// [`decompress`](Inflater::decompress) into a buffer that is reused
+    /// across streams.
+    ///
     /// # Errors
     ///
     /// As [`decompress`](Inflater::decompress), plus

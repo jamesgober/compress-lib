@@ -703,6 +703,45 @@ fn test_attack_t14_adversarial_encoder_input_bounded() {
         level9 < level6 * 40 + Duration::from_secs(1),
         "level 6 {level6:?}, level 9 {level9:?}"
     );
+    // Shapes a four-byte hash cannot spread out: four fixed bytes and a
+    // changing one, and pairs whose second byte is one of two. Every chain
+    // stays full of short matches; the per-byte chain budget (D-065) keeps
+    // level 9 within 16 times level 6 on them (1.0 took 16 to 37 times, at
+    // under 1 MB/s).
+    let four: Vec<u8> = (0..(1 << 20) / 5)
+        .flat_map(|_| [b'W', b'X', b'Y', b'Z', next(&mut x) as u8])
+        .collect();
+    let pairs: Vec<u8> = (0..1 << 20)
+        .map(|i| {
+            if i % 2 == 0 {
+                b'a'
+            } else {
+                b'a' + (next(&mut x) % 2) as u8
+            }
+        })
+        .collect();
+    for (name, data) in [("abc+r", &data), ("wxyz+r", &four), ("pairs", &pairs)] {
+        let best_of = |level| {
+            (0..2)
+                .map(|_| {
+                    let t = Instant::now();
+                    let packed = deflate::compress_with(data, level);
+                    let took = t.elapsed();
+                    assert_eq!(
+                        deflate::decompress_with(&packed, Limits::unlimited()).unwrap(),
+                        *data
+                    );
+                    took
+                })
+                .min()
+                .unwrap()
+        };
+        let (six, nine) = (best_of(Level::DEFAULT), best_of(Level::BEST));
+        assert!(
+            nine < six * 16 + Duration::from_millis(500),
+            "{name}: level 6 {six:?}, level 9 {nine:?}"
+        );
+    }
     // A deflater fed the same input in small pieces with flushes stays
     // correct and bounded too.
     let mut d = Deflater::new(Level::BEST);

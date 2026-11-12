@@ -373,6 +373,12 @@ pub struct Deflater {
     /// Start of the current block's input in `win` (negative once slid out).
     block_start: isize,
     hash_bits: u32,
+    /// Bytes hashed per position: 3 at levels 1 to 3, 4 at the lazy levels
+    /// 4 to 9 (D-065), as the mask over a four-byte load.
+    hash_mask: u32,
+    /// Chain steps the lazy search may still take: `CHAIN_BUDGET` more per
+    /// input byte, at most `CHAIN_BANK` banked (T-14, D-065).
+    chain_budget: i64,
     head: Vec<u16>,
     prev: Vec<u16>,
     match_available: bool,
@@ -470,6 +476,8 @@ impl Deflater {
             lookahead: 0,
             block_start: 1,
             hash_bits,
+            hash_mask: hash_mask(level),
+            chain_budget: CHAIN_BANK,
             head: vec![0; 1 << hash_bits],
             prev: vec![0; wsize],
             match_available: false,
@@ -571,6 +579,12 @@ impl Deflater {
     /// Changes the level for data not yet compressed. The current block is
     /// ended first when the change switches to or from level 0.
     ///
+    /// Memory stays at its built size when the change follows a call that
+    /// returned `NeedsInput` or `Done`. Changing the level while output is
+    /// still waiting (`NeedsOutput`) compresses the waiting input under the
+    /// old level at once, and its blocks wait with that output, so the
+    /// output buffer may grow past its built size.
+    ///
     /// # Examples
     ///
     /// ```
@@ -589,7 +603,7 @@ impl Deflater {
         let next = params(level);
         if (level == 0) != (self.level == 0) {
             // Finish the input waiting under the old level first.
-            self.process(true);
+            self.process(true, false);
             self.end_block(false);
         } else if self.params.lazy_matching && !next.lazy_matching && self.match_available {
             // Lazy matching holds the byte before `strstart` back; greedy
@@ -602,6 +616,13 @@ impl Deflater {
             // Level 1 left the chains stale (D-055); empty chains are only
             // shorter.
             self.prev.fill(0);
+        }
+        if hash_mask(level) != self.hash_mask {
+            // The chains were built on the other hash width. Empty them (only
+            // shorter), so every head entry has the width `reset` assumes.
+            self.head.fill(0);
+            self.prev.fill(0);
+            self.hash_mask = hash_mask(level);
         }
         // No pending match crosses the change.
         self.match_length = MIN_MATCH - 1;
@@ -686,8 +707,9 @@ impl Deflater {
         let end = self.strstart + self.lookahead;
         if self.total_in as usize + 1 < self.size && end < self.head.len() / 4 {
             let shift = 32 - self.hash_bits;
+            let mask = self.hash_mask;
             for pos in 1..end.saturating_sub(MIN_MATCH - 1) {
-                self.head[hash3(load32(&self.win, pos), shift)] = 0;
+                self.head[hash(load32(&self.win, pos), mask, shift)] = 0;
             }
         } else {
             self.head.fill(0);
@@ -695,6 +717,7 @@ impl Deflater {
         self.strstart = 1;
         self.lookahead = 0;
         self.block_start = 1;
+        self.chain_budget = CHAIN_BANK;
         self.match_available = false;
         self.match_length = MIN_MATCH - 1;
         self.prev_length = MIN_MATCH - 1;
@@ -781,7 +804,7 @@ impl Deflater {
         if self.level != 0 {
             let end = 1 + take;
             let mut pos = 1;
-            while pos + MIN_MATCH <= end {
+            while pos + hash_len(self.hash_mask) <= end {
                 self.insert(pos);
                 pos += 1;
             }
@@ -855,7 +878,7 @@ impl Deflater {
             consumed += self.fill_window(&input[consumed..]);
             let all_in = consumed == input.len();
             let flushing = flush != Flush::None && all_in;
-            self.process(flushing);
+            self.process(flushing, true);
             if self.pending_left() > 0 {
                 continue;
             }
@@ -1002,6 +1025,7 @@ impl Deflater {
             &mut self.prev,
             &self.win,
             pos,
+            self.hash_mask,
             32 - self.hash_bits,
             self.wsize - 1,
         )
@@ -1029,7 +1053,10 @@ impl Deflater {
     /// Turns the lookahead into symbols. Without `flushing`, stops while
     /// fewer than `MIN_LOOKAHEAD` bytes wait (more input could extend a
     /// match); with it, uses everything.
-    fn process(&mut self, flushing: bool) {
+    /// With `one_block`, returns once a block has been written, so the
+    /// caller drains it before the next (F-3: `pending` holds at most one
+    /// block).
+    fn process(&mut self, flushing: bool, one_block: bool) {
         if self.level == 0 {
             // Blocks of exactly `chunk` bytes, so the cuts do not depend on
             // how the input arrived (D-057). A shorter block is cut only at a
@@ -1063,7 +1090,7 @@ impl Deflater {
             // A block ended: let the caller drain it before the next one, so
             // `pending` holds at most one block and never outgrows its first
             // allocation. Where blocks end does not change.
-            if !self.pending.is_empty() {
+            if one_block && !self.pending.is_empty() {
                 return;
             }
         }
@@ -1249,7 +1276,7 @@ impl Deflater {
                     for _ in 1..len {
                         s += 1;
                         if chained {
-                            insert_at(head, prev, win, s, shift, wmask);
+                            insert_at(head, prev, win, s, HASH3, shift, wmask);
                         } else {
                             head[hash3(load32(win, s), shift)] = s as u16;
                         }
@@ -1296,6 +1323,12 @@ impl Deflater {
         let wmask = self.wsize - 1;
         let keep = self.keep;
         let shift = 32 - self.hash_bits;
+        let mask = self.hash_mask;
+        // A position is hashed only with all its hashed bytes in the
+        // lookahead, so no hash reads past the input (which would make the
+        // chains depend on how the input arrived).
+        let hlen = hash_len(mask);
+        let mut budget = self.chain_budget;
         let cap = self.sym_cap;
         let mut s = self.strstart;
         let mut look = self.lookahead;
@@ -1317,11 +1350,14 @@ impl Deflater {
             if n >= cap {
                 break false;
             }
+            // Every byte the loop passes earns chain steps (a match's bytes
+            // are earned where it is taken).
+            budget = (budget + CHAIN_BUDGET).min(CHAIN_BANK);
             let mut cur = 0;
             let mut s4 = 0;
-            if look >= MIN_MATCH {
+            if look >= hlen {
                 s4 = load32(win, s);
-                let h = hash3(s4, shift);
+                let h = hash(s4, mask, shift);
                 cur = usize::from(head[h]);
                 prev[s & wmask] = head[h];
                 head[h] = s as u16;
@@ -1338,6 +1374,11 @@ impl Deflater {
                 } else {
                     p.chain
                 };
+                // Never more than the banked budget (at least a few steps):
+                // input that keeps every chain full of short matches gets
+                // the search ordinary data uses, not ten times more.
+                chain = chain.min(budget.max(CHAIN_FLOOR) as usize);
+                let allowed = chain;
                 let mut best = prev_length;
                 // Candidates at or above `low` are inside the window.
                 let low = s.saturating_sub(keep).max(1);
@@ -1372,23 +1413,25 @@ impl Deflater {
                     }
                     cur = next;
                 }
+                budget -= (allowed - chain) as i64 + 1;
                 match_length = best.min(look);
                 if match_length == MIN_MATCH && s - match_start > TOO_FAR {
                     match_length = MIN_MATCH - 1;
                 }
             }
             if prev_length >= MIN_MATCH && match_length <= prev_length {
-                let max_insert = s + look - MIN_MATCH;
+                let max_insert = (s + look).saturating_sub(hlen);
                 let dist = s - 1 - prev_match;
                 syms[n] = ((dist as u32) << 16) | (prev_length - MIN_MATCH) as u32;
                 n += 1;
                 freq.lit_freq[257 + LENGTH_CODE[prev_length - MIN_MATCH] as usize] += 1;
                 freq.dist_freq[dist_code(dist)] += 1;
                 look -= prev_length - 1;
+                budget = (budget + CHAIN_BUDGET * (prev_length as i64 - 2)).min(CHAIN_BANK);
                 for _ in 0..prev_length - 2 {
                     s += 1;
                     if s <= max_insert {
-                        insert_at(head, prev, win, s, shift, wmask);
+                        insert_at(head, prev, win, s, mask, shift, wmask);
                     }
                 }
                 available = false;
@@ -1409,6 +1452,7 @@ impl Deflater {
         };
         self.strstart = s;
         self.lookahead = look;
+        self.chain_budget = budget;
         self.nsyms = n;
         self.match_available = available;
         self.match_length = match_length;
@@ -1732,7 +1776,45 @@ fn load32(win: &[u8], pos: usize) -> u32 {
 /// Hash of the low three bytes of `v` into `32 - shift` bits.
 #[inline(always)]
 fn hash3(v: u32, shift: u32) -> usize {
-    ((v & 0x00FF_FFFF).wrapping_mul(0x9E37_79B1) >> shift) as usize
+    hash(v, HASH3, shift)
+}
+
+/// Hashes the bytes of `v` that `mask` keeps.
+#[inline(always)]
+fn hash(v: u32, mask: u32, shift: u32) -> usize {
+    ((v & mask).wrapping_mul(0x9E37_79B1) >> shift) as usize
+}
+
+/// Chain steps the lazy search earns per input byte. Ordinary data uses
+/// far fewer (35 per byte for English text at level 9, under 30 for every
+/// input tried at levels 4 to 7); input built to fill every chain with short
+/// matches used 90 to 380 at levels 8 and 9 (D-065).
+const CHAIN_BUDGET: i64 = 64;
+/// Most chain steps banked: one 32 KiB window's worth, so a stretch that
+/// needs long searches can still have them.
+const CHAIN_BANK: i64 = CHAIN_BUDGET * 32 * 1024;
+/// Steps a search may take however low the budget is.
+const CHAIN_FLOOR: i64 = 8;
+
+/// Three bytes hashed (levels 1 to 3).
+const HASH3: u32 = 0x00FF_FFFF;
+/// Four bytes hashed (levels 4 to 9).
+const HASH4: u32 = 0xFFFF_FFFF;
+
+/// The hash mask a level uses: four bytes where lazy matching searches
+/// chains, since a three-byte prefix is too common to tell candidates apart
+/// on binary data and a three-byte match is rarely worth it there (D-065).
+const fn hash_mask(level: u8) -> u32 {
+    if params(level).lazy_matching {
+        HASH4
+    } else {
+        HASH3
+    }
+}
+
+/// Bytes a mask hashes.
+const fn hash_len(mask: u32) -> usize {
+    if mask == HASH4 { 4 } else { MIN_MATCH }
 }
 
 /// Inserts `pos` into the chains; returns the previous head.
@@ -1742,10 +1824,11 @@ fn insert_at(
     prev: &mut [u16],
     win: &[u8],
     pos: usize,
+    mask: u32,
     shift: u32,
     wmask: usize,
 ) -> usize {
-    let h = hash3(load32(win, pos), shift);
+    let h = hash(load32(win, pos), mask, shift);
     let old = head[h];
     prev[pos & wmask] = old;
     head[h] = pos as u16;

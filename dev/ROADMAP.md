@@ -79,6 +79,16 @@ Exit: James's go; the audit recorded in `docs/STABILITY-1.0.md`; every gap, defe
 - [x] 24 h fuzz on the final code (`inflate_raw` 151,357,523 runs, `inflate_split` 101,726,569, `roundtrip` 56,085,017; 309 million in all), no findings.
 - [x] 4 h soak on the final code: 2,098,028 rounds in 4 h 11 min of wall time, heap flat (21,318 bytes live between rounds, peak 1,745,428).
 
-## After 1.0
-- 1.1: brotli decode (BR-01), feature `brotli`.
-- 1.2: brotli encode (BR-02).
+## v1.1.0 - Review fixes (2026-11-12)
+Exit: every finding of the external review of 1.0 fixed or documented, each with a regression test that fails on 1.0; the fuzz targets and the soak run on the fixed code; hosted benchmarks re-run.
+- [x] F-1: the ratio cap counts every gzip member together (D-064).
+- [x] F-2: four-byte hash at levels 4 to 9 and a per-byte chain budget (D-065).
+- [x] F-3: a deflater's memory stays at its built size (D-064).
+- [x] F-4: `io::DecodeReader` refuses trailing data; `with_trailing_data` (D-064).
+- [x] F-5: `DictionaryRequired` is resumable (D-064).
+- [x] F-6 to F-8: doc figures, `wipe` and redacted `Debug` on the framing types, the gzip trailing-data rule (D-064); `gzip::Decoder::reset` fixed.
+- [ ] Fuzz and soak on the fixed code; hosted benchmarks; release.
+
+## After 1.1
+- 1.2: brotli decode (BR-01), feature `brotli` (D-066).
+- 1.3: brotli encode (BR-02).

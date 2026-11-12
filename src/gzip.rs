@@ -544,6 +544,12 @@ impl Decoder {
     /// Allows bytes that are not a gzip member after the last member (some
     /// tools pad files with zeros); `consumed` stops before them.
     ///
+    /// Bytes that begin with the gzip magic (`1F`, or `1F 8B`) are read as
+    /// another member, as GNU gzip reads them, so trailing data must not
+    /// start with `1F`: a lone `1F` or a damaged member after the last one
+    /// is an error (`UnexpectedEnd` or the member's own error), not
+    /// trailing data.
+    ///
     /// # Examples
     ///
     /// ```
