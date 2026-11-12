@@ -376,9 +376,14 @@ pub struct Deflater {
     /// Bytes hashed per position: 3 at levels 1 to 3, 4 at the lazy levels
     /// 4 to 9 (D-065), as the mask over a four-byte load.
     hash_mask: u32,
-    /// Chain steps the lazy search may still take: `CHAIN_BUDGET` more per
-    /// input byte, at most `CHAIN_BANK` banked (T-14, D-065).
+    /// Chain steps past `CHAIN_FREE` the lazy search may still take:
+    /// `CHAIN_BUDGET` more per input byte, at most `CHAIN_BANK` banked
+    /// (T-14, D-065). Earned up to the stream position `budget_pos`.
     chain_budget: i64,
+    budget_pos: u64,
+    /// Bytes the window has slid since the stream began, so a window
+    /// position plus this is a position in the stream.
+    slid: u64,
     head: Vec<u16>,
     prev: Vec<u16>,
     match_available: bool,
@@ -478,6 +483,8 @@ impl Deflater {
             hash_bits,
             hash_mask: hash_mask(level),
             chain_budget: CHAIN_BANK,
+            budget_pos: 0,
+            slid: 0,
             head: vec![0; 1 << hash_bits],
             prev: vec![0; wsize],
             match_available: false,
@@ -718,6 +725,8 @@ impl Deflater {
         self.lookahead = 0;
         self.block_start = 1;
         self.chain_budget = CHAIN_BANK;
+        self.budget_pos = 0;
+        self.slid = 0;
         self.match_available = false;
         self.match_length = MIN_MATCH - 1;
         self.prev_length = MIN_MATCH - 1;
@@ -1008,6 +1017,7 @@ impl Deflater {
         self.match_start = self.match_start.saturating_sub(shift);
         self.prev_match = self.prev_match.saturating_sub(shift);
         self.block_start -= shift as isize;
+        self.slid += shift as u64;
         // Positions are below 2^16 and so is the shift; entries that slide
         // out become 0, "none".
         let s = shift as u32;
@@ -1333,6 +1343,8 @@ impl Deflater {
         // chains depend on how the input arrived).
         let hlen = hash_len(mask);
         let mut budget = self.chain_budget;
+        let mut earned_to = self.budget_pos;
+        let base = self.slid;
         let cap = self.sym_cap;
         let mut s = self.strstart;
         let mut look = self.lookahead;
@@ -1354,9 +1366,6 @@ impl Deflater {
             if n >= cap {
                 break false;
             }
-            // Every byte the loop passes earns chain steps (a match's bytes
-            // are earned where it is taken).
-            budget = (budget + CHAIN_BUDGET).min(CHAIN_BANK);
             let mut cur = 0;
             let mut s4 = 0;
             if look >= hlen {
@@ -1373,16 +1382,18 @@ impl Deflater {
                 // Search for a match longer than the one held back.
                 let max = MAX_MATCH.min(look);
                 let nice = p.nice.min(max);
-                let mut chain = if prev_length >= p.good {
+                let full = if prev_length >= p.good {
                     p.chain >> 2
                 } else {
                     p.chain
                 };
-                // Never more than the banked budget (at least a few steps):
-                // input that keeps every chain full of short matches gets
-                // the search ordinary data uses, not ten times more.
-                chain = chain.min(budget.max(CHAIN_FLOOR) as usize);
-                let allowed = chain;
+                // The first `CHAIN_FREE` steps are free; more come from the
+                // budget, so input that keeps every chain full of short
+                // matches gets about the search ordinary data uses, not ten
+                // times more. Short walks never touch the budget.
+                let mut chain = full.min(CHAIN_FREE);
+                let mut extra = full - chain;
+                let mut granted = false;
                 let mut best = prev_length;
                 // Candidates at or above `low` are inside the window.
                 let low = s.saturating_sub(keep).max(1);
@@ -1409,7 +1420,26 @@ impl Deflater {
                     }
                     chain -= 1;
                     if chain == 0 {
-                        break;
+                        if extra == 0 {
+                            break;
+                        }
+                        // Earn what the bytes since the last long walk
+                        // brought, then take what the bank allows.
+                        let at = base + s as u64;
+                        let gained = at
+                            .saturating_sub(earned_to)
+                            .saturating_mul(CHAIN_BUDGET as u64);
+                        budget =
+                            (budget + i64::try_from(gained).unwrap_or(CHAIN_BANK)).min(CHAIN_BANK);
+                        earned_to = at;
+                        let grant = extra.min(budget.max(0) as usize);
+                        if grant == 0 {
+                            break;
+                        }
+                        budget -= grant as i64;
+                        extra -= grant;
+                        chain = grant;
+                        granted = true;
                     }
                     let next = usize::from(prev[cur & wmask]);
                     if next >= cur || next < low {
@@ -1417,7 +1447,10 @@ impl Deflater {
                     }
                     cur = next;
                 }
-                budget -= (allowed - chain) as i64 + 1;
+                if granted {
+                    // Steps granted but not taken go back.
+                    budget += chain as i64;
+                }
                 match_length = best.min(look);
                 if match_length == MIN_MATCH && s - match_start > TOO_FAR {
                     match_length = MIN_MATCH - 1;
@@ -1431,7 +1464,6 @@ impl Deflater {
                 freq.lit_freq[257 + LENGTH_CODE[prev_length - MIN_MATCH] as usize] += 1;
                 freq.dist_freq[dist_code(dist)] += 1;
                 look -= prev_length - 1;
-                budget = (budget + CHAIN_BUDGET * (prev_length as i64 - 2)).min(CHAIN_BANK);
                 for _ in 0..prev_length - 2 {
                     s += 1;
                     if s <= max_insert {
@@ -1457,6 +1489,7 @@ impl Deflater {
         self.strstart = s;
         self.lookahead = look;
         self.chain_budget = budget;
+        self.budget_pos = earned_to;
         self.nsyms = n;
         self.match_available = available;
         self.match_length = match_length;
@@ -1790,16 +1823,17 @@ fn hash(v: u32, mask: u32, shift: u32) -> usize {
     ((v & mask).wrapping_mul(0x9E37_79B1) >> shift) as usize
 }
 
-/// Chain steps the lazy search earns per input byte. Ordinary data uses
-/// far fewer (35 per byte for English text at level 9, under 30 for every
-/// input tried at levels 4 to 7); input built to fill every chain with short
-/// matches used 90 to 380 at levels 8 and 9 (D-065).
+/// Chain steps every lazy search may take without the budget.
+const CHAIN_FREE: usize = 16;
+/// Chain steps past `CHAIN_FREE` the lazy search earns per input byte.
+/// Ordinary data uses far fewer (35 steps per byte in all for English text
+/// at level 9, under 30 for every input tried at levels 4 to 7); input built
+/// to fill every chain with short matches used 90 to 380 at levels 8 and 9
+/// (D-065).
 const CHAIN_BUDGET: i64 = 64;
 /// Most chain steps banked: one 32 KiB window's worth, so a stretch that
 /// needs long searches can still have them.
 const CHAIN_BANK: i64 = CHAIN_BUDGET * 32 * 1024;
-/// Steps a search may take however low the budget is.
-const CHAIN_FLOOR: i64 = 8;
 
 /// Room a block needs beyond 4 bytes per symbol: the block header bits,
 /// the end-of-block code, and the eight bytes the writer's last store may
