@@ -1118,7 +1118,9 @@ impl Deflater {
     /// Level 1 while a whole match always fits in the lookahead: one probe
     /// per position and no chain, so no lookahead or chain checks inside the
     /// loop (D-055). Makes the same choices as [`greedy_run`](Self::greedy_run),
-    /// which finishes what is left.
+    /// which finishes what is left. Never inlined, so its code does not
+    /// move with changes to the loops around it (D-067).
+    #[inline(never)]
     fn fast_run(&mut self) {
         let lazy = self.params.lazy;
         let keep = self.keep;
