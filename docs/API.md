@@ -182,7 +182,7 @@ The streaming decoder (DF-10 to DF-19). Push input, pull output, caller-owned bu
 | `with_limits(self, Limits) -> Self` | | 0.3 |
 | `decompress(&mut self, input: &[u8], output: &mut [u8]) -> Result<Progress, Error>` | more input may follow | 0.3 |
 | `finish(&mut self, input: &[u8], output: &mut [u8]) -> Result<Progress, Error>` | this is the last input; an unfinished stream is `UnexpectedEnd` once output is not the reason | 0.3 |
-| `decompress_vec(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<Progress, Error>` | appends, reserving at most 64 KiB at a time and never past the cap | 0.3 |
+| `decompress_vec(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<Progress, Error>` | appends, growing the vector geometrically (at least 64 KiB at a time, using reserved capacity first) and never past the cap | 0.3 |
 | `is_done()`, `total_in()`, `total_out()`, `window_bits()`, `limits()` | | 0.3 |
 | `reset(&mut self)` | forget history and state, keep allocations | 0.3 |
 | `next_stream(&mut self) -> Result<(), Error>` | after `Done`, start a new stream keeping the window (`InvalidState` before `Done`) | 0.3 |
@@ -275,6 +275,8 @@ rx.decompress_message(&wire, &mut text, 1 << 20)?;
 |---|---|
 | `zlib::{compress, compress_with, decompress, decompress_with}` (ZL-01) | 0.5 |
 | `zlib::Decoder`, `zlib::Encoder` with `set_dictionary`, `dictionary_id()` (ZL-02) | 0.5 |
+| `DictionaryRequired` does not fail a `zlib::Decoder`: give the dictionary with `set_dictionary` (checked against the id, else `WrongDictionary`) and continue with the input from the error's `offset()` | 1.1 |
+| `wipe(&mut self)` on `zlib::Decoder` (drops the dictionary too), `zlib::Encoder`, `gzip::Decoder`, `gzip::Encoder`: zero the engine and the framing state, then reset | 1.1 |
 | `gzip::{compress, compress_with, decompress, decompress_with}` (GZ-01) | 0.5 |
 | `gzip::Decoder` (multi-member by default; `with_single_member()`, `with_trailing_data(bool)`), `gzip::Encoder` (`with_header(GzipHeader)`) (GZ-02) | 0.5 |
 | `GzipHeader::new()`, `with_name`, `with_comment`, `with_extra`, `with_mtime`, `with_os`, `with_text`; `name()`, `comment()`, `extra()`, `mtime()`, `os()`, `extra_flags()`, `text()`; read through `Decoder::with_keep_header(true)` and `Decoder::header()` (GZ-03) | 0.5 |
@@ -292,18 +294,19 @@ HTTP's `deflate` content coding is zlib framing (RFC 9110 section 8.4.1.2): use 
 | `Decoder::new(Format)`, `Encoder::new(Format, Level)`: one type for code that picks the format at run time (FMT-02) | 0.5 |
 | `compress_lib::decompress(&[u8])` and `decompress_with(&[u8], Limits)`: gzip or zlib, detected (FMT-03) | 0.5 |
 | `Decoder::{with_limits, format, decompress, finish, decompress_vec, finish_vec, is_done, total_in, total_out, reset}`, `Encoder::{format, compress, compress_vec, reset}` | 0.5 |
+| `Decoder::wipe`, `Encoder::wipe` | 1.1 |
 
 ---
 
 ## `io` adapters
 
-Feature `std` (default), 0.5 (IO-01 to IO-03; named as below since 1.0): `io::DecodeReader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`), `io::EncodeWriter<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::EncodeReader<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
+Feature `std` (default), 0.5 (IO-01 to IO-03; named as below since 1.0): `io::DecodeReader<R: Read>` (decompresses while reading; `with_limits`, `into_inner`; since 1.1 bytes after the stream are refused, and `with_trailing_data(true)` stops at the end of the stream instead), `io::EncodeWriter<W: Write>` (compresses while writing; `flush()` is a sync flush, `finish()` ends the stream and returns the inner writer; a drop without `finish` tries to end the stream and ignores errors), `io::EncodeReader<R: Read>` (reads plain data, returns it compressed) and `io::DecodeWriter<W: Write>` (written compressed, writes plain; `finish()` checks the stream ended). Each takes a `Format` and, for decoders, `Limits`, and holds one 32 KiB buffer besides its engine.
 
 ---
 
 ## Brotli (after 1.0)
 
-Feature `brotli` (not default): `brotli::decompress`, `brotli::Decoder` in 1.1 (BR-01); `brotli::compress`, `brotli::Encoder` in 1.2 (BR-02).
+Feature `brotli` (not default): `brotli::decompress`, `brotli::Decoder` in 1.2 (BR-01); `brotli::compress`, `brotli::Encoder` in 1.3 (BR-02).
 
 ---
 
@@ -312,4 +315,4 @@ Feature `brotli` (not default): `brotli::decompress`, `brotli::Decoder` in 1.1 (
 | Feature | Default | Adds |
 |---|---|---|
 | `std` | yes | `io` adapters, `From<Error> for std::io::Error`. Without it the crate is `no_std` with `alloc`. |
-| `brotli` | no | brotli, from 1.1 |
+| `brotli` | no | brotli, from 1.2 |

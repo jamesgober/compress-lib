@@ -13,6 +13,63 @@
 
 ---
 
+## [1.1.0] - 2026-11-12
+
+Bug fixes, two small additions, and faster, smaller compression at levels
+4 to 9. Every fix comes with a test that fails on 1.0.
+
+### Added
+
+- `io::DecodeReader::with_trailing_data(bool)`: stop at the end of the
+  stream instead of refusing what follows it.
+- `wipe()` on `zlib::Decoder`, `zlib::Encoder`, `gzip::Decoder`,
+  `gzip::Encoder`, `Decoder`, and `Encoder`, as on the engines: zero the
+  history, buffers, and framing state (a zlib preset dictionary, gzip header
+  fields), then reset.
+
+### Changed
+
+- Levels 4 to 9 hash four bytes instead of three, and their lazy search
+  works within a budget of chain steps per input byte. Against 1.0 on the
+  benchmark corpora, level 6 is up to 1.9 times as fast and up to 2.9
+  percent smaller, level 9 up to 2.5 times as fast and up to 1.1 percent
+  smaller; on input crafted to fill every hash chain, level 9 is 3.6 to 30
+  times as fast. Levels 0 to 3 produce the same bytes as 1.0 (bar a rare
+  case at window bits 8); levels 4 to 9 produce different bytes, smaller on
+  every benchmark corpus.
+- `Debug` for the zlib and gzip types shows a preset dictionary by length
+  only, and never header fields in progress or output in waiting.
+
+### Fixed
+
+- `Limits::max_ratio` now counts a gzip stream as a whole. Each member used
+  to start the count again, so a bomb split into members that each stayed
+  under the ratio floor (1 MiB by default) was never ratio-checked; only
+  the absolute output cap applied.
+- `io::DecodeReader` refuses bytes after a raw or zlib stream
+  (`InvalidData` wrapping `TrailingData`), as the one-shot functions,
+  `DecodeWriter`, and gzip already did. It used to stop at the end and drop
+  what followed.
+- After `DictionaryRequired`, `zlib::Decoder::set_dictionary` now takes
+  effect: the decoder waits for the dictionary instead of failing, and the
+  next call continues from the error's offset. A dictionary that is not the
+  one the header names is refused with `WrongDictionary`.
+- A `Deflater` at levels 1 to 9 no longer grows past the memory it was
+  built with (it could grow by a third: up to 527,416 bytes for a level-6
+  deflater built at 396,280).
+- `gzip::Decoder::reset` (and so `Decoder::reset` for gzip) kept the last
+  member's length, so a reset decoder refused its next stream with
+  `LengthMismatch`.
+- Documentation: the `message::Compressor` and `Inflater::decompress_vec`
+  memory figures; gzip trailing data must not begin with the gzip magic
+  (`1F`).
+
+### Verified
+
+- 12 hours of fuzzing on the final code for each of the five targets (`inflate_raw` 112,795,396 runs, `inflate_split` 53,641,061, `framing` 71,627,318, `message` 15,993,371, `roundtrip` 15,116,148; 269 million in all), no findings.
+- 4-hour soak on the final code: 2,739,425 rounds in 4 h 23 min of wall time, heap flat (21,318 bytes live between rounds, peak 1,734,221).
+- cargo-semver-checks against 1.0.0: additions only.
+
 ## [1.0.0] - 2026-11-10
 
 Stable: the API frozen for 1.x, faster on both sides, and three defects
@@ -278,7 +335,8 @@ The scaffold: the repository, the plan, and CI. No codec yet.
   `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 - `fuzz/` skeleton.
 
-[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jamesgober/compress-lib/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jamesgober/compress-lib/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jamesgober/compress-lib/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/jamesgober/compress-lib/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/compress-lib/compare/v0.7.0...v0.8.0

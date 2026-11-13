@@ -1,5 +1,5 @@
 //! Quick interleaved timing for tuning on a shared machine: every round
-//! times this checkout, the last release (0.9.0), and miniz_oxide back to
+//! times this checkout, the last release (1.0.0), and miniz_oxide back to
 //! back, and the best round of each counts. Not a replacement for the
 //! criterion benchmarks.
 //!
@@ -28,7 +28,7 @@ fn mbps(len: usize, d: Duration) -> f64 {
     len as f64 / d.as_secs_f64() / 1e6
 }
 
-/// Best-of-`rounds` times for (this checkout, 0.9.0, miniz_oxide).
+/// Best-of-`rounds` times for (this checkout, 1.0.0, miniz_oxide).
 fn race(
     rounds: usize,
     mut ours: impl FnMut(),
@@ -54,14 +54,14 @@ fn report(
 ) {
     let x = |a: Duration, b: Duration| b.as_secs_f64() / a.as_secs_f64();
     print!(
-        "{kind} {name:<6} L{level}: {:>7.1} MB/s  vs 0.9.0 x{:.2}  vs miniz x{:.2}",
+        "{kind} {name:<6} L{level}: {:>7.1} MB/s  vs 1.0.0 x{:.2}  vs miniz x{:.2}",
         mbps(len, t[0]),
         x(t[0], t[1]),
         x(t[0], t[2]),
     );
     if let Some([a, b, c]) = sizes {
         print!(
-            "  size {a:>8} (0.9.0 {:+.2}%, miniz {:+.2}%)",
+            "  size {a:>8} (1.0.0 {:+.2}%, miniz {:+.2}%)",
             (a as f64 / b as f64 - 1.0) * 100.0,
             (a as f64 / c as f64 - 1.0) * 100.0
         );
